@@ -60,31 +60,50 @@ export function Fallback2D({ state, freshIdx }: { state: RunState; freshIdx: num
         <text x={24} y={PLOT_H + 4} fontSize={11} fill="var(--ink-3)">
           normalized work-zone geography (lon → / lat ↑)
         </text>
-        {/* CI strip */}
-        {e && (
-          <g transform={`translate(0, ${PLOT_H + 16})`}>
-            <text x={24} y={12} fontSize={11} fill="var(--ink-2)">
-              PPI 95% CI ({fmt(e.ci_lower)} — {fmt(e.ci_upper)}), estimate {fmt(e.estimate)}
-            </text>
-            <rect x={24} y={20} width={W - 48} height={16} fill="var(--surface-3)" rx={4} />
-            <rect
-              x={24 + 0.1 * (W - 48)}
-              y={20}
-              width={0.8 * (W - 48)}
-              height={16}
-              fill="var(--series-ppi)"
-              opacity={0.25}
-              rx={4}
-            />
-            <rect
-              x={24 + 0.5 * (W - 48) - 1.5}
-              y={18}
-              width={3}
-              height={20}
-              fill="var(--series-ppi)"
-            />
-          </g>
-        )}
+        {/* CI strip: the REAL interval mapped onto a real value axis
+            spanning the prediction range union the interval — it moves
+            and tightens with the data (review C1). */}
+        {e &&
+          (() => {
+            const f = state.data.f_pool;
+            const lo = Math.min(Math.min(...f), e.ci_lower);
+            const hi = Math.max(Math.max(...f), e.ci_upper);
+            const span = hi - lo || 1;
+            const x0 = 24;
+            const width = W - 48;
+            const px = (v: number) => x0 + ((v - lo) / span) * width;
+            return (
+              <g transform={`translate(0, ${PLOT_H + 16})`}>
+                <text x={x0} y={12} fontSize={11} fill="var(--ink-2)">
+                  PPI 95% CI [{fmt(e.ci_lower)}, {fmt(e.ci_upper)}], estimate {fmt(e.estimate)}{" "}
+                  (superpopulation target)
+                </text>
+                <rect x={x0} y={20} width={width} height={16} fill="var(--surface-3)" rx={4} />
+                <rect
+                  x={px(e.ci_lower)}
+                  y={20}
+                  width={Math.max(px(e.ci_upper) - px(e.ci_lower), 2)}
+                  height={16}
+                  fill="var(--series-ppi)"
+                  opacity={0.3}
+                  rx={2}
+                />
+                <rect
+                  x={px(e.estimate) - 1.5}
+                  y={18}
+                  width={3}
+                  height={20}
+                  fill="var(--series-ppi)"
+                />
+                <text x={x0} y={50} fontSize={10} fill="var(--ink-3)">
+                  {fmt(lo)}
+                </text>
+                <text x={x0 + width} y={50} fontSize={10} textAnchor="end" fill="var(--ink-3)">
+                  {fmt(hi)}
+                </text>
+              </g>
+            );
+          })()}
       </svg>
       <figcaption className="flex gap-3 px-1 text-[12px]" style={{ color: "var(--ink-2)" }}>
         <span>

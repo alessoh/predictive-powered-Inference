@@ -60,7 +60,9 @@ export function EstimateChart({ history, unit }: { history: RoundRecord[]; unit:
   const sx = (spent: number) => PAD.l + ((spent - xMin) / (xMax - xMin || 1)) * (W - PAD.l - PAD.r);
   const sy = (v: number) => PAD.t + (1 - (v - y0) / (y1 - y0)) * (H - PAD.t - PAD.b);
 
-  const fmt = (v: number) => (Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(2));
+  // One precision across every value on this chart (review B7).
+  const decimals = Math.max(Math.abs(y0), Math.abs(y1)) >= 100 ? 1 : 2;
+  const fmt = (v: number) => v.toFixed(decimals);
 
   return (
     <figure aria-label={`Estimate and confidence intervals by labels spent (${unit})`}>
@@ -162,6 +164,26 @@ export function EstimateChart({ history, unit }: { history: RoundRecord[]; unit:
                 <path d={band} fill={s.cssVar} opacity={0.14} />
                 <path d={line} fill="none" stroke={s.cssVar} strokeWidth={2} />
               </g>
+            );
+          })}
+          {/* Direct end-of-line labels (relief rule, review B6): ink text
+              beside a colored mark, staggered to avoid collisions. */}
+          {SERIES.map((s, si) => {
+            const pts = rows.map((r) => r.values[si]).filter((v) => v !== null);
+            const lastRow = rows[rows.length - 1];
+            const v = lastRow?.values[si];
+            if (!pts.length || !v || !lastRow) return null;
+            return (
+              <text
+                key={`lbl-${s.key}`}
+                x={Math.min(sx(lastRow.spent) + 6, W - 4)}
+                y={sy(v.est) + (si - 1) * 12}
+                fontSize={10}
+                textAnchor="end"
+                fill="var(--ink-1)"
+              >
+                <tspan fill={s.cssVar}>●</tspan> {s.label}
+              </text>
             );
           })}
           {/* bootstrap pool-mean interval ticks (PPI method rounds) */}

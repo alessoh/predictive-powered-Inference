@@ -8,9 +8,16 @@
  *    for labeling, the verifier produces the label from the record's
  *    authoritative structured fields (with provenance). If the field
  *    the estimand needs is null, it REFUSES that record.
- * 2. Research findings: independently recompute every research-agent
- *    finding from the records; any mismatch or unknown metric is a
- *    refusal with the measured discrepancy.
+ * 2. Research findings: recompute every research-agent finding from the
+ *    source records; any mismatch or unknown metric is a refusal with
+ *    the measured discrepancy.
+ *
+ * Honest scope of duty 2 (review A3): the recomputation uses the SAME
+ * metric predicates as the research agent (METRICS), so it detects
+ * tampered or corrupted reports — numerators, denominators, or scores
+ * that do not follow from the records — but it cannot detect a bug in a
+ * metric definition itself. It is tamper-detection, not an independent
+ * reimplementation of the metrics.
  */
 
 import type { WorkZoneRecord } from "@/lib/records";

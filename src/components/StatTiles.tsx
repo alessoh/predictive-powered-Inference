@@ -32,6 +32,14 @@ function Tile({
   );
 }
 
+/** One precision for an entire interval, picked from its largest
+ * magnitude — mixed precision inside one readout was a review finding. */
+export function fmtInterval(values: number[]): (v: number) => string {
+  const maxAbs = Math.max(...values.map((v) => Math.abs(v)));
+  const decimals = maxAbs >= 100 ? 1 : 3;
+  return (v: number) => v.toFixed(decimals);
+}
+
 export function StatTiles({
   state,
   unit,
@@ -45,7 +53,12 @@ export function StatTiles({
 }) {
   const last: RoundRecord | undefined = state?.history[state.history.length - 1];
   const ppi = last?.estimates.ppi;
-  const fmt = (v: number) => (Math.abs(v) >= 100 ? v.toFixed(1) : v.toFixed(3));
+  const fmt = ppi
+    ? fmtInterval([ppi.estimate, ppi.ci_lower, ppi.ci_upper])
+    : (v: number) => String(v);
+  // A share whose estimate or interval leaves [0,1] must say so: the PPI
+  // mean estimator is not range-constrained (review B3).
+  const shareOutOfRange = unit === "share" && !!ppi && (ppi.ci_lower < 0 || ppi.ci_upper > 1);
 
   return (
     <div
@@ -53,7 +66,14 @@ export function StatTiles({
       aria-live="polite"
       aria-label="Current run status"
     >
-      <Tile label={`PPI estimate (${unit}) · superpopulation target`}>
+      <Tile
+        label={`PPI estimate (${unit}) · superpopulation target`}
+        warn={
+          shareOutOfRange
+            ? "interval leaves [0,1]: the PPI mean estimator is not range-constrained; raw values shown"
+            : undefined
+        }
+      >
         {ppi ? (
           <>
             {fmt(ppi.estimate)}{" "}

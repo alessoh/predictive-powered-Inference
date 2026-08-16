@@ -122,8 +122,7 @@ describe("orchestrator", () => {
     expect(result.tokensUsed).toBe(0); // heuristic oracle spends nothing
   });
 
-  it("degrades gracefully when one feed is down and fails only when all are", async () => {
-    const sleep = () => Promise.resolve(); // no real backoff waits in tests
+  it("unknown feed ids are config errors, not degradations", async () => {
     const result = await runWorkflow(
       {
         feedIds: ["ms", "zz-down"],
@@ -132,16 +131,90 @@ describe("orchestrator", () => {
         oracle: "heuristic",
         maxRetries: 2,
       },
-      { sleep },
+      { sleep: () => Promise.resolve() },
     ).catch((e) => e);
-    // Unknown feed id is a config error, not a degradation:
     expect(result).toBeInstanceOf(Error);
+  });
 
-    // A known feed whose fixture read fails degrades instead. Simulate by
-    // pointing a copy of the registry at a bad path is out of scope here;
-    // instead verify the all-degraded contract via config error above and
-    // the happy path elsewhere. Degradation is additionally covered by
-    // orchestrator unit behavior on live-mode fetch failures in e2e.
+  it("degrades gracefully when one feed is down: run continues on the rest", async () => {
+    // Injected loader (review A1): "ut" is down, everything else loads.
+    const { defaultLoadFeedBody } = await import("@/lib/agents/ingest");
+    let utAttempts = 0;
+    const loadBody: typeof defaultLoadFeedBody = async (feed, mode) => {
+      if (feed.id === "ut") {
+        utAttempts += 1;
+        throw new Error("simulated: connection refused");
+      }
+      return defaultLoadFeedBody(feed, mode);
+    };
+    const result = await runWorkflow(
+      {
+        feedIds: ["ms", "ut", "mo"],
+        mode: "fixture",
+        estimand: "duration_days",
+        oracle: "heuristic",
+        maxRetries: 3,
+      },
+      { sleep: () => Promise.resolve(), loadBody },
+    );
+    const ut = result.feedStatuses.find((s) => s.feedId === "ut")!;
+    expect(ut.status).toBe("degraded");
+    expect(ut.attempts).toBe(3); // retried with backoff before degrading
+    expect(utAttempts).toBe(3);
+    expect(ut.error).toContain("connection refused");
+    expect(result.warnings.some((w) => w.includes("feed ut degraded"))).toBe(true);
+    // The run continued on the healthy feeds: MS + MO records present.
+    expect(result.feedStatuses.filter((s) => s.status === "ok")).toHaveLength(2);
+    expect(result.pool.length).toBeGreaterThan(500);
+    expect(result.predictions.predictions.length).toBe(result.pool.length);
+  });
+
+  it("fails the run only when ALL feeds are down", async () => {
+    const loadBody = async () => {
+      throw new Error("simulated: everything down");
+    };
+    const result = await runWorkflow(
+      {
+        feedIds: ["ms", "mo"],
+        mode: "fixture",
+        estimand: "duration_days",
+        oracle: "heuristic",
+        maxRetries: 2,
+      },
+      { sleep: () => Promise.resolve(), loadBody },
+    ).catch((e) => e);
+    expect(result).toBeInstanceOf(Error);
+    expect(String(result)).toContain("all feeds degraded");
+  });
+
+  it("rejects invalid user-supplied rubrics instead of scoring silently", async () => {
+    const badRubric = {
+      id: "bad",
+      version: 1,
+      title: "Bad",
+      description: "weights do not sum to 1",
+      criteria: [
+        {
+          id: "only",
+          question: "?",
+          weight: 0.5,
+          groundingFields: ["description"],
+          metric: "fraction_substantive_description",
+        },
+      ],
+    };
+    const result = await runWorkflow(
+      {
+        feedIds: ["ms"],
+        mode: "fixture",
+        estimand: "duration_days",
+        oracle: "heuristic",
+        rubric: badRubric,
+      },
+      { sleep: () => Promise.resolve() },
+    ).catch((e) => e);
+    expect(result).toBeInstanceOf(Error);
+    expect(String(result)).toContain("invalid rubric");
   });
 
   it("labelBatch grounds exactly the requested ids", async () => {

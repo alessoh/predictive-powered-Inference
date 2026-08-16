@@ -5,7 +5,7 @@
  * gracefully when a feed is down — a degraded feed never fails a run.
  */
 
-import { ingestFeed, type IngestResult } from "@/lib/agents/ingest";
+import { ingestFeed, type FeedBodyLoader, type IngestResult } from "@/lib/agents/ingest";
 import {
   anthropicPredictBatch,
   predictAllHeuristic,
@@ -21,7 +21,7 @@ import {
 } from "@/lib/agents/verify";
 import { FEEDS } from "@/lib/feeds";
 import type { WorkZoneRecord } from "@/lib/records";
-import { DEFAULT_RUBRIC, type Rubric } from "@/lib/rubrics/rubrics";
+import { DEFAULT_RUBRIC, validateRubric, type Rubric } from "@/lib/rubrics/rubrics";
 
 export interface OrchestratorConfig {
   feedIds: string[];
@@ -87,12 +87,18 @@ const realSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 export async function runWorkflow(
   config: OrchestratorConfig,
-  deps: { sleep?: (ms: number) => Promise<void> } = {},
+  deps: { sleep?: (ms: number) => Promise<void>; loadBody?: FeedBodyLoader } = {},
 ): Promise<WorkflowResult> {
   const sleep = deps.sleep ?? realSleep;
   const maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES;
   const maxTokens = config.maxTokens ?? DEFAULT_MAX_TOKENS;
   const rubric = config.rubric ?? DEFAULT_RUBRIC;
+  const rubricProblems = validateRubric(rubric);
+  if (rubricProblems.length > 0) {
+    // A user-supplied rubric that cannot be scored honestly is a config
+    // error, never a silent partial score (review A6).
+    throw new Error(`invalid rubric ${rubric.id}: ${rubricProblems.join("; ")}`);
+  }
   const warnings: string[] = [];
 
   // 1. Ingestion with retry + graceful degradation per feed.
@@ -101,7 +107,7 @@ export async function runWorkflow(
   for (const feedId of config.feedIds) {
     if (!FEEDS[feedId]) throw new Error(`unknown feed ${feedId}`);
     const result = await withRetries(
-      () => ingestFeed(feedId, config.mode),
+      () => ingestFeed(feedId, config.mode, deps.loadBody),
       maxRetries,
       () => {},
       sleep,
@@ -163,11 +169,15 @@ export async function runWorkflow(
   let predictions: PredictionSet;
   let tokensUsed = 0;
   if (config.oracle === "anthropic") {
-    const { predictions: preds, usage } = await anthropicPredictBatch(pool);
+    // The ceiling is enforced BETWEEN batches so the run stops before
+    // exceeding it, rather than discovering the overspend afterwards and
+    // discarding paid-for predictions (review A2).
+    const { predictions: preds, usage } = await anthropicPredictBatch(pool, undefined, maxTokens);
     tokensUsed = usage.inputTokens + usage.outputTokens;
-    if (tokensUsed > maxTokens) {
-      throw new Error(
-        `token ceiling exceeded: ${tokensUsed} > ${maxTokens}; raise maxTokens deliberately`,
+    const missing = pool.length - preds.length;
+    if (missing > 0) {
+      warnings.push(
+        `oracle returned no usable prediction for ${missing} records; they are excluded from the pool, not silently invented`,
       );
     }
     predictions = {

@@ -52,7 +52,11 @@ export default function ExperimentLab() {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-  const [force2d, setForce2d] = useState(false);
+  // View preference: null = automatic (3D when WebGL is present and the
+  // user has not requested reduced motion — the brief mandates the 2D
+  // fallback as the reduced-motion DEFAULT; the toggle lets the user
+  // deliberately opt back into 3D, where pulse and easing stay off).
+  const [viewPref, setViewPref] = useState<null | "2d" | "3d">(null);
   // Lazy initializers: evaluated on the first client render, never in an
   // effect (SSR fallback values match the pre-launch UI, which does not
   // depend on them until a run exists).
@@ -64,14 +68,21 @@ export default function ExperimentLab() {
   });
   const prevLabeled = useRef<number[]>([]);
   const [freshIdx, setFreshIdx] = useState<number[]>([]);
+  // The random-baseline curve is ALWAYS shown alongside the chosen
+  // policy (docs/03-design.md chart 2): after the primary run, the same
+  // experiment is re-run with the random policy purely for comparison.
+  const [baseline, setBaseline] = useState<RunState | null>(null);
+  const [baselineRunning, setBaselineRunning] = useState(false);
   const cancelled = useRef(false);
   const reducedMotion = useReducedMotion();
+  const [railOpen, setRailOpen] = useState(false);
 
   const launch = useCallback(async () => {
     setRunning(true);
     setError(null);
     setSaved(false);
     setState(null);
+    setBaseline(null);
     cancelled.current = false;
     prevLabeled.current = [];
     try {
@@ -129,6 +140,30 @@ export default function ExperimentLab() {
         };
         await saveRun(run);
         setSaved(true);
+
+        // Random-baseline comparison run (display-only, not saved).
+        if (config.policy !== "random" && !cancelled.current) {
+          setBaselineRunning(true);
+          try {
+            const baseInitial = await initRun(wf, {
+              estimand: isQuantile ? "quantile" : "mean",
+              quantile_p: 0.5,
+              policy: "random",
+              batch_size: config.batchSize,
+              label_budget: Math.min(config.labelBudget, wf.pool.f.length),
+              seed: config.seed,
+              n_boot: 0,
+            });
+            const baseFinal = await driveRun(
+              baseInitial,
+              { onState: () => {}, onError: (m) => setError(`baseline: ${m}`) },
+              () => !cancelled.current,
+            );
+            if (baseFinal.status === "complete") setBaseline(baseFinal);
+          } finally {
+            setBaselineRunning(false);
+          }
+        }
       }
     } catch (err) {
       setError(String(err));
@@ -140,12 +175,25 @@ export default function ExperimentLab() {
   useEffect(() => () => void (cancelled.current = true), []);
 
   const unit = config.estimand === "lane_restricted" ? "share" : "days";
-  const show3d = webgl && !force2d && !reducedMotion;
+  const show3d = webgl && (viewPref !== null ? viewPref === "3d" : !reducedMotion);
 
   return (
     <main className="grid gap-4 lg:grid-cols-[320px_1fr]">
       <h1 className="sr-only">Experiment Lab</h1>
-      <ConfigRail value={config} onChange={setConfig} onLaunch={launch} running={running} />
+      <div>
+        <button
+          type="button"
+          className="chip mb-2 w-full justify-center py-2 lg:hidden"
+          aria-expanded={railOpen}
+          aria-controls="config-rail"
+          onClick={() => setRailOpen(!railOpen)}
+        >
+          {railOpen ? "Hide configuration ▴" : "Configure experiment ▾"}
+        </button>
+        <div id="config-rail" className={`${railOpen ? "block" : "hidden"} lg:block`}>
+          <ConfigRail value={config} onChange={setConfig} onLaunch={launch} running={running} />
+        </div>
+      </div>
       <div className="flex min-w-0 flex-col gap-4">
         {error && (
           <div
@@ -176,19 +224,27 @@ export default function ExperimentLab() {
             <h2 className="text-[16px] font-medium">Sampling space</h2>
             <div className="flex items-center gap-2 text-[12px]">
               {!webgl && <span className="chip">WebGL unavailable — 2D view</span>}
-              {reducedMotion && <span className="chip">Reduced motion — 2D view</span>}
+              {reducedMotion && (
+                <span className="chip">
+                  Reduced motion — 2D by default{show3d ? "; 3D opted in, motion off" : ""}
+                </span>
+              )}
               {stress > 0 && <span className="chip">stress +{stress} synthetic points</span>}
               <button
                 type="button"
                 className="chip"
-                aria-pressed={force2d}
-                onClick={() => setForce2d(!force2d)}
+                aria-pressed={!show3d}
+                disabled={!webgl}
+                onClick={() => setViewPref(show3d ? "2d" : "3d")}
               >
-                {show3d ? "Switch to 2D" : "2D active"}
+                {show3d ? "Switch to 2D" : webgl ? "Switch to 3D" : "2D (no WebGL)"}
               </button>
             </div>
           </div>
-          <div className="h-[46vh] min-h-[320px]" data-testid="scene-container">
+          <div
+            className="h-[40vh] min-h-[280px] lg:h-[46vh] lg:min-h-[320px]"
+            data-testid="scene-container"
+          >
             {state ? (
               show3d ? (
                 <ExperimentScene
@@ -239,11 +295,23 @@ export default function ExperimentLab() {
                 "Power-tuned",
                 "var(--series-tuned)",
               ),
+              widthSeriesFromHistory(
+                config.policy === "random" ? (state?.history ?? []) : (baseline?.history ?? []),
+                "ppi",
+                "Random baseline (PPI)",
+                "var(--series-baseline)",
+                true,
+              ),
             ]}
           />
           <p className="px-1 text-[12px]" style={{ color: "var(--ink-3)" }}>
-            To compare this policy against the random baseline, run the same seed with the Random
-            policy and diff the two runs on the Runs page.
+            {config.policy === "random"
+              ? "This run IS the random baseline."
+              : baselineRunning
+                ? "Computing the random-baseline comparison run (same seed and budget)…"
+                : baseline
+                  ? "Dashed gray: the same experiment re-run with the random policy (same seed and budget), computed automatically for comparison."
+                  : "The random-baseline comparison appears after the run completes."}
           </p>
         </section>
 

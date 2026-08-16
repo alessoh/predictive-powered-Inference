@@ -25,7 +25,18 @@ export default defineConfig({
       // via `npm run test:perf`; not part of headless CI (SwiftShader
       // cannot honestly measure the 60fps budget — docs/03-design.md).
       name: "scene-perf",
-      use: { ...devices["Desktop Chrome"], headless: false },
+      use: {
+        ...devices["Desktop Chrome"],
+        headless: false,
+        launchOptions: {
+          // An occluded window throttles rAF to zero and fakes a hang;
+          // frame timing must not depend on window stacking order.
+          args: [
+            "--disable-backgrounding-occluded-windows",
+            "--disable-background-timer-throttling",
+          ],
+        },
+      },
       testMatch: /scene-perf/,
     },
   ],

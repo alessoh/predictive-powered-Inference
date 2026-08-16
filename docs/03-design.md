@@ -116,3 +116,15 @@ turns all of it off.
 - Fixture vs live mode is a persistent badge, never hidden.
 - The methodology page states the known limitations verbatim from the gauntlet logs
   (plug-in weights, oracle-dependence of policy gains, single-platform determinism).
+
+## Deviation notes (dated)
+
+- **2026-08-16 — chart value transitions dropped deliberately.** The motion spec listed
+  "chart value transitions (150ms)". Estimates arrive as discrete per-round events from the
+  Python core; tweening between them would display interpolated numbers that were never
+  computed, which conflicts with the honesty surfaces above. Charts redraw discretely; the
+  CI slab in the scene keeps its 200ms ease (it animates geometry, not fabricated values).
+- **2026-08-16 — reduced-motion view policy clarified.** The project brief mandates the 2D
+  fallback as the reduced-motion default, and that stands. The view toggle now genuinely
+  works both ways: a reduced-motion user may deliberately opt into the 3D scene, where the
+  selection pulse and camera easing remain disabled.

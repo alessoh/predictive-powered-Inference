@@ -53,9 +53,9 @@ later, `DOT_FEED_<STATE>_KEY` env vars are the designated slot (`.env.example`).
 `fixtures/feeds/` contains full byte-for-byte snapshots of the four primary feeds taken
 2026-08-16 (~2.5 MB total, 1,802 real work-zone records). Fixture mode replays these
 snapshots deterministically; **all tests and demos run on fixtures by default** and never
-depend on a third-party endpoint being up. Live mode is opt-in per run. The cache layer
-(`.cache/feeds/` locally; in-memory per-instance on Vercel) applies a minimum TTL of
-120 s to live fetches so a demo cannot hammer a state feed.
+depend on a third-party endpoint being up. Live mode is opt-in per run. Live fetches go
+through an in-memory per-process cache with a 120 s minimum TTL (`src/lib/agents/ingest.ts`)
+so a demo cannot hammer a state feed; there is no disk cache.
 
 ## What the records support statistically
 
@@ -64,7 +64,10 @@ Each normalized record carries: road/direction/description text, start/end dates
 verification flags. The prototype's estimands are derived from these:
 
 - **mean work-zone duration (days)** — truth from `start_date`/`end_date`;
-- **proportion with lane-restricting impact** — truth from `vehicle_impact != "all-lanes-open"`;
+- **proportion with lane-restricting impact** — truth from `vehicle_impact` being in the
+  restricting set (closures, alternating one-way, merges/splits, flagging, temporary
+  signals; `all-lanes-open` and the shift variants are non-restricting, and `unknown`
+  is refused by the verifier — see `src/lib/records.ts`);
 - the labeling agent's *predictions* of these quantities come from the free-text
   `description` only, so prediction quality is real, measurable, and honestly separated
   from ground truth (see docs/01-architecture.md, labeling agent hard rule).
@@ -72,7 +75,7 @@ verification flags. The prototype's estimands are derived from these:
 ## Model oracle in fixture mode
 
 Live mode uses an Anthropic-model labeling agent (needs `ANTHROPIC_API_KEY`). Fixture/test
-mode uses a deterministic, documented heuristic oracle (keyword/duration-based) plus
-recorded model outputs where available — never silently substituted for the LLM: every
+mode uses a deterministic, documented heuristic oracle (keyword/duration-based) — never
+silently substituted for the LLM: every
 prediction is tagged with its oracle identity (`oracle: "anthropic:<model>"` or
 `oracle: "heuristic:v1"`), and the dashboard displays which oracle produced a run.

@@ -28,7 +28,7 @@ test("scene memory does not grow across mount/unmount cycles", async ({ page }) 
     // Unmount the 3D scene (switch to the 2D fallback), then remount.
     await page.getByRole("button", { name: "Switch to 2D" }).click();
     await expect(page.getByTestId("scene-container").locator("canvas")).toHaveCount(0);
-    await page.getByRole("button", { name: "2D active" }).click();
+    await page.getByRole("button", { name: "Switch to 3D" }).click();
     await expect(page.getByTestId("scene-container").locator("canvas")).toBeVisible();
     await page.waitForTimeout(400); // let a few frames render
     counts.push(

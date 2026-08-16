@@ -203,9 +203,9 @@ export default async function MethodologyPage() {
             rather than paying it (docs/02-feeds.md).
           </li>
           <li>
-            <strong>The heuristic oracle is weak by design</strong> and labeled as such
-            (`heuristic:v1`); live Anthropic labeling requires an API key and is tagged with its
-            model identity.
+            <strong>The heuristic oracle is weak by design</strong> and labeled as such (
+            <code>heuristic:v1</code>); live Anthropic labeling requires an API key and is tagged
+            with its model identity.
           </li>
           <li>
             <strong>Determinism is certified single-platform</strong> (byte-identical reruns on the

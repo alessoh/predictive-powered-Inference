@@ -122,6 +122,23 @@ export function WidthChart({ series }: { series: WidthSeries[] }) {
               strokeDasharray={s.dashed ? "6 4" : undefined}
             />
           ))}
+          {/* Direct end labels (relief rule): ink text + colored mark. */}
+          {nonEmpty.map((s, si) => {
+            const last = s.points[s.points.length - 1];
+            if (!last) return null;
+            return (
+              <text
+                key={`lbl-${s.label}`}
+                x={Math.min(sx(last.spent) + 6, W - 4)}
+                y={sy(last.width) + (si - nonEmpty.length / 2) * 11}
+                fontSize={10}
+                textAnchor="end"
+                fill="var(--ink-1)"
+              >
+                <tspan fill={s.cssVar}>{s.dashed ? "◌" : "●"}</tspan> {s.label}
+              </text>
+            );
+          })}
           <text x={PAD.l} y={H - 8} fontSize={11} fill="var(--ink-3)">
             {xMin}
           </text>

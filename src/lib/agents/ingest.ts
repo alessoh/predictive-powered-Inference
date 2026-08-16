@@ -40,7 +40,14 @@ export interface IngestResult {
 
 const liveCache = new Map<string, { at: number; body: string }>();
 
-async function loadFeedBody(
+/** Injectable body loader so tests can simulate a downed feed and
+ * exercise the orchestrator's degradation path for real (review A1). */
+export type FeedBodyLoader = (
+  feed: FeedSpec,
+  mode: "live" | "fixture",
+) => Promise<{ body: string; fetchedAt: string }>;
+
+export async function defaultLoadFeedBody(
   feed: FeedSpec,
   mode: "live" | "fixture",
 ): Promise<{ body: string; fetchedAt: string }> {
@@ -237,11 +244,12 @@ function normalizeFeature(
 export async function ingestFeed(
   feedId: string,
   mode: "live" | "fixture" = "fixture",
+  loadBody: FeedBodyLoader = defaultLoadFeedBody,
 ): Promise<IngestResult> {
   const feed = FEEDS[feedId];
   if (!feed) throw new Error(`unknown feed ${feedId}`);
 
-  const { body, fetchedAt } = await loadFeedBody(feed, mode);
+  const { body, fetchedAt } = await loadBody(feed, mode);
   const parsed = JSON.parse(body) as Record<string, unknown>;
 
   // Root dialect: 4.1/4.2 use feed_info; 4.0 (and some mislabeled feeds)

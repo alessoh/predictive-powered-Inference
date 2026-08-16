@@ -137,12 +137,20 @@ export interface AnthropicUsage {
 export async function anthropicPredictBatch(
   records: WorkZoneRecord[],
   client?: Anthropic,
+  maxTokens = Number.POSITIVE_INFINITY,
 ): Promise<{ predictions: Prediction[]; usage: AnthropicUsage }> {
   const anthropic = client ?? new Anthropic();
   const predictions: Prediction[] = [];
   const usage: AnthropicUsage = { inputTokens: 0, outputTokens: 0 };
 
   for (let i = 0; i < records.length; i += BATCH_SIZE) {
+    // Enforce the ceiling BEFORE spending the next batch (review A2).
+    if (usage.inputTokens + usage.outputTokens >= maxTokens) {
+      throw new Error(
+        `token ceiling ${maxTokens} reached after ${predictions.length}/${records.length} ` +
+          `predictions; raise maxTokens deliberately or shrink the pool`,
+      );
+    }
     const batch = records.slice(i, i + BATCH_SIZE);
     const listing = batch
       .map((r, j) => `${j}. ${r.description.slice(0, 400) || "(no description)"}`)

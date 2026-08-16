@@ -18,7 +18,15 @@ function summary(run: SavedRun) {
     : null;
 }
 
-const fmt = (v: number) => (Math.abs(v) >= 100 ? v.toFixed(1) : v.toFixed(3));
+import { fmtInterval } from "@/components/StatTiles";
+
+/** Color follows the ENTITY (the policy), never selection order (B5). */
+const POLICY_COLORS: Record<string, string> = {
+  random: "var(--series-baseline)",
+  variance_reduction: "var(--series-ppi)",
+  uncertainty: "var(--series-tuned)",
+  diversity: "var(--series-classical)",
+};
 
 export default function RunsPage() {
   const [runs, setRuns] = useState<SavedRun[]>([]);
@@ -121,7 +129,12 @@ export default function RunsPage() {
                     </td>
                     <td className="num p-2 text-right">{s?.spent ?? "—"}</td>
                     <td className="num p-2 text-right">
-                      {s ? `${fmt(s.est)} [${fmt(s.lo)}, ${fmt(s.hi)}]` : "—"}
+                      {s
+                        ? (() => {
+                            const f = fmtInterval([s.est, s.lo, s.hi]);
+                            return `${f(s.est)} [${f(s.lo)}, ${f(s.hi)}]`;
+                          })()
+                        : "—"}
                     </td>
                     <td className="p-2 text-right">
                       <button type="button" className="chip mr-1" onClick={() => download(r)}>
@@ -152,10 +165,11 @@ export default function RunsPage() {
             {diffPair.map((r) => {
               const s = summary(r)!;
               const width = s.hi - s.lo;
+              const fmt = fmtInterval([s.est, s.lo, s.hi]);
               return (
                 <div key={r.id} className="panel p-3">
                   <div className="text-[12px]" style={{ color: "var(--ink-2)" }}>
-                    {r.name} · {r.policy} · seed {r.seed} · {r.oracle}
+                    {r.name} · {r.oracle}
                   </div>
                   <div className="num text-[20px]">
                     {fmt(s.est)}{" "}
@@ -168,12 +182,12 @@ export default function RunsPage() {
             })}
           </div>
           <WidthChart
-            series={diffPair.map((r, i) =>
+            series={diffPair.map((r) =>
               widthSeriesFromHistory(
                 r.finalState.history,
                 "ppi",
                 `${r.policy} (${r.name.slice(0, 24)})`,
-                i === 0 ? "var(--series-ppi)" : "var(--series-classical)",
+                POLICY_COLORS[r.policy] ?? "var(--series-ppi)",
                 r.policy === "random",
               ),
             )}

@@ -56,9 +56,15 @@ export async function POST(request: Request): Promise<NextResponse> {
     const lats: (number | null)[] = [];
     const meta: WorkflowResponse["meta"] = [];
 
+    let droppedNoPrediction = 0;
     for (const rec of wf.pool) {
       const pred = predByRecord.get(rec.id);
-      if (!pred) continue; // oracle skipped it: excluded rather than invented
+      if (!pred) {
+        // Oracle produced no usable prediction: excluded and COUNTED,
+        // never invented and never silently dropped (review A4).
+        droppedNoPrediction += 1;
+        continue;
+      }
       const label = groundLabel(rec, estimand);
       if (label.refused || label.value === null) continue; // pre-filtered upstream
       f.push(estimand === "duration_days" ? pred.durationDays : pred.laneRestrictedProb);
@@ -124,8 +130,14 @@ export async function POST(request: Request): Promise<NextResponse> {
         reportOf: v.reportOf,
         allPassed: v.allPassed,
       })),
-      excludedCount: wf.excludedCount,
-      warnings: wf.warnings,
+      excludedCount: wf.excludedCount + droppedNoPrediction,
+      warnings:
+        droppedNoPrediction > 0
+          ? [
+              ...wf.warnings,
+              `${droppedNoPrediction} records dropped: oracle returned no usable prediction`,
+            ]
+          : wf.warnings,
     };
     return NextResponse.json(response);
   } catch (err) {
