@@ -125,7 +125,9 @@ export async function runWorkflow(
         recordCount: 0,
         skippedCount: 0,
       });
-      warnings.push(`feed ${feedId} degraded after ${result.attempts} attempts: ${String(result.error)}`);
+      warnings.push(
+        `feed ${feedId} degraded after ${result.attempts} attempts: ${String(result.error)}`,
+      );
     }
   }
   if (ingests.length === 0) {

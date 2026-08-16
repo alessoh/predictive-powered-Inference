@@ -43,10 +43,7 @@ export const METRICS: Record<string, MetricFn> = {
   fraction_derivable_duration: (r) => r.durationDays !== null,
 };
 
-export function scoreCriterion(
-  criterion: RubricCriterion,
-  records: WorkZoneRecord[],
-): Finding {
+export function scoreCriterion(criterion: RubricCriterion, records: WorkZoneRecord[]): Finding {
   const fn = METRICS[criterion.metric];
   if (!fn) {
     throw new Error(`rubric criterion ${criterion.id} uses unknown metric ${criterion.metric}`);

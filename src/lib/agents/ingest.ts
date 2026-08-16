@@ -94,9 +94,10 @@ function normalizeImpact(v: unknown): VehicleImpact | null {
 }
 
 /** Centroid of any GeoJSON geometry's flattened coordinates. */
-function centroidOf(
-  geometry: RawFeature["geometry"],
-): { value: [number, number] | null; note: string } {
+function centroidOf(geometry: RawFeature["geometry"]): {
+  value: [number, number] | null;
+  note: string;
+} {
   if (!geometry || !geometry.coordinates) {
     return { value: null, note: "no geometry in raw feature" };
   }

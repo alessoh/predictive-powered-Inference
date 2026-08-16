@@ -59,7 +59,8 @@ const OPEN_CUES: [RegExp, number][] = [
   [/\b(all lanes open|no lane closures?|open to traffic)\b/i, 0.4],
   [/\b(shoulder work( only)?|mowing|sweeping|striping)\b/i, 0.2],
 ];
-const LONG_CUES = /\b(bridge|reconstruct|rehabilitation|widening|interchange|new concrete|pavement replace)\b/i;
+const LONG_CUES =
+  /\b(bridge|reconstruct|rehabilitation|widening|interchange|new concrete|pavement replace)\b/i;
 const SHORT_CUES = /\b(mowing|sweeping|pothole|patch(ing)?|striping|utility|survey|inspection)\b/i;
 
 export function heuristicPredict(record: WorkZoneRecord): Prediction {
@@ -175,16 +176,21 @@ export async function anthropicPredictBatch(
     const items = (tool.input as { items: Array<Record<string, number>> }).items;
     for (const item of items) {
       const idx = item.index;
-      if (idx === undefined) continue;
+      const prob = item.lane_restricted_prob;
+      const dur = item.duration_days;
+      const unc = item.uncertainty;
+      if (idx === undefined || prob === undefined || dur === undefined || unc === undefined) {
+        continue; // malformed row: skip rather than invent values
+      }
       const rec = batch[idx];
       if (!rec) continue;
       predictions.push({
         kind: "prediction",
         recordId: rec.id,
         oracle: `anthropic:${ANTHROPIC_MODEL}`,
-        laneRestrictedProb: Math.min(1, Math.max(0, item.lane_restricted_prob)),
-        durationDays: Math.max(0, item.duration_days),
-        uncertainty: Math.min(1, Math.max(0, item.uncertainty)),
+        laneRestrictedProb: Math.min(1, Math.max(0, prob)),
+        durationDays: Math.max(0, dur),
+        uncertainty: Math.min(1, Math.max(0, unc)),
       });
     }
   }

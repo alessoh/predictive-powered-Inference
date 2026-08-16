@@ -8,7 +8,12 @@
       "id": "date-verification",
       "question": "What fraction of work-zone records carry verified start AND end dates?",
       "weight": 0.25,
-      "groundingFields": ["startDate", "endDate", "provenance.fields.startDate", "provenance.fields.endDate"],
+      "groundingFields": [
+        "startDate",
+        "endDate",
+        "provenance.fields.startDate",
+        "provenance.fields.endDate"
+      ],
       "metric": "fraction_verified_dates"
     },
     {
