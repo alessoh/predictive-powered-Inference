@@ -31,9 +31,7 @@ export function EstimateChart({ history, unit }: { history: RoundRecord[]; unit:
         spent: h.spent,
         values: SERIES.map((s) => {
           const e = h.estimates[s.key];
-          return e
-            ? { est: e.estimate, lo: e.ci_lower, hi: e.ci_upper }
-            : null;
+          return e ? { est: e.estimate, lo: e.ci_lower, hi: e.ci_upper } : null;
         }),
         boot: h.bootstrap ? { lo: h.bootstrap.ci_lower, hi: h.bootstrap.ci_upper } : null,
       })),
@@ -59,8 +57,7 @@ export function EstimateChart({ history, unit }: { history: RoundRecord[]; unit:
   const xMax = Math.max(...rows.map((r) => r.spent));
   const xMin = Math.min(...rows.map((r) => r.spent));
 
-  const sx = (spent: number) =>
-    PAD.l + ((spent - xMin) / (xMax - xMin || 1)) * (W - PAD.l - PAD.r);
+  const sx = (spent: number) => PAD.l + ((spent - xMin) / (xMax - xMin || 1)) * (W - PAD.l - PAD.r);
   const sy = (v: number) => PAD.t + (1 - (v - y0) / (y1 - y0)) * (H - PAD.t - PAD.b);
 
   const fmt = (v: number) => (Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(2));
@@ -147,9 +144,7 @@ export function EstimateChart({ history, unit }: { history: RoundRecord[]; unit:
           ))}
           {/* CI bands + lines */}
           {SERIES.map((s, si) => {
-            const pts = rows
-              .map((r, i) => ({ r, i, v: r.values[si] }))
-              .filter((p) => p.v !== null);
+            const pts = rows.map((r, i) => ({ r, i, v: r.values[si] })).filter((p) => p.v !== null);
             if (!pts.length) return null;
             const band =
               pts.map((p, k) => `${k === 0 ? "M" : "L"}${sx(p.r.spent)},${sy(p.v!.hi)}`).join("") +

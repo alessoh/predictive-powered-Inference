@@ -12,18 +12,40 @@ export interface DriverCallbacks {
   onError: (message: string) => void;
 }
 
+const STEP_RETRIES = 3;
+
 async function postStep(payload: unknown): Promise<RunState> {
-  const res = await fetch("/api/step", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  const body = (await res.json()) as { state?: RunState; error?: string };
-  if (!res.ok || !body.state) {
-    throw new Error(body.error ?? `step API returned HTTP ${res.status}`);
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < STEP_RETRIES; attempt++) {
+    try {
+      const res = await fetch("/api/step", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const body = (await res.json()) as { state?: RunState; error?: string };
+      if (!res.ok || !body.state) {
+        // 4xx are real contract errors — do not retry those.
+        if (res.status >= 400 && res.status < 500) {
+          throw new Error(body.error ?? `step API returned HTTP ${res.status}`);
+        }
+        throw new RetryableError(body.error ?? `step API returned HTTP ${res.status}`);
+      }
+      return body.state;
+    } catch (err) {
+      // Network-level failures (dropped keep-alive, serverless cold
+      // start) and 5xx are retried with backoff; steps are pure and
+      // deterministic, so a retry cannot corrupt the run.
+      const retryable = err instanceof RetryableError || err instanceof TypeError;
+      if (!retryable || attempt === STEP_RETRIES - 1) throw err;
+      lastErr = err;
+      await new Promise((r) => setTimeout(r, 300 * 2 ** attempt));
+    }
   }
-  return body.state;
+  throw lastErr ?? new Error("step retries exhausted");
 }
+
+class RetryableError extends Error {}
 
 export async function initRun(
   workflow: WorkflowResponse,

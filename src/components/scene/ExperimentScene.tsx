@@ -70,11 +70,11 @@ function GlInfoHook() {
 function PointCloud({ data }: { data: SceneData }) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const pulseRef = useRef(0);
-  const { state, meta, freshIdx, reducedMotion, stressPoints = 0 } = data;
+  const { state, freshIdx, reducedMotion, stressPoints = 0 } = data;
   const m = state.data.f_pool.length;
   const total = m + stressPoints;
 
-  const { positions, colors, labeledSet, freshSet } = useMemo(() => {
+  const { positions, labeledSet, freshSet } = useMemo(() => {
     const toY = valueScale(state.data.f_pool);
     const pos = new Float32Array(total * 3);
     const x = state.data.x_pool;
@@ -87,7 +87,7 @@ function PointCloud({ data }: { data: SceneData }) {
     }
     // Deterministic synthetic stress points (frame-rate gate only).
     let s = 1234567;
-    const rand = () => ((s = (s * 1103515245 + 12345) % 2147483648) / 2147483648);
+    const rand = () => (s = (s * 1103515245 + 12345) % 2147483648) / 2147483648;
     for (let i = m; i < total; i++) {
       pos[i * 3] = (rand() - 0.5) * WORLD;
       pos[i * 3 + 1] = rand() * HEIGHT;
@@ -95,7 +95,6 @@ function PointCloud({ data }: { data: SceneData }) {
     }
     return {
       positions: pos,
-      colors: new Float32Array(total * 3),
       labeledSet: new Set(state.labeled_idx),
       freshSet: new Set(freshIdx),
     };
@@ -189,8 +188,9 @@ function AcquisitionSurface({ state }: { state: RunState }) {
       state.q_never.forEach((q, i) => {
         const gx = Math.min(grid - 1, Math.max(0, Math.floor(x[i]![0]! * grid)));
         const gy = Math.min(grid - 1, Math.max(0, Math.floor(x[i]![1]! * grid)));
-        acc[gy * grid + gx] += 1 - q;
-        cnt[gy * grid + gx] += 1;
+        const cell = gy * grid + gx;
+        acc[cell] = (acc[cell] ?? 0) + (1 - q);
+        cnt[cell] = (cnt[cell] ?? 0) + 1;
       });
     }
     const canvas = document.createElement("canvas");
@@ -199,7 +199,7 @@ function AcquisitionSurface({ state }: { state: RunState }) {
     const ctx = canvas.getContext("2d")!;
     const img = ctx.createImageData(grid, grid);
     // Sequential blue ramp (--seq-*); computed here from the same hexes.
-    const ramp = [
+    const ramp: [number, number, number][] = [
       [219, 233, 250],
       [156, 195, 238],
       [93, 156, 226],
@@ -208,16 +208,18 @@ function AcquisitionSurface({ state }: { state: RunState }) {
     ];
     let maxV = 0;
     for (let i = 0; i < acc.length; i++) {
-      if (cnt[i]! > 0) maxV = Math.max(maxV, acc[i]! / cnt[i]!);
+      const c = cnt[i] ?? 0;
+      if (c > 0) maxV = Math.max(maxV, (acc[i] ?? 0) / c);
     }
     for (let i = 0; i < acc.length; i++) {
-      const v = cnt[i]! > 0 && maxV > 0 ? acc[i]! / cnt[i]! / maxV : 0;
+      const c = cnt[i] ?? 0;
+      const v = c > 0 && maxV > 0 ? (acc[i] ?? 0) / c / maxV : 0;
       const idx = Math.min(ramp.length - 1, Math.floor(v * ramp.length));
-      const [r, g, b] = ramp[idx]!;
+      const [r, g, b] = ramp[idx] ?? ramp[0]!;
       img.data[i * 4] = r;
       img.data[i * 4 + 1] = g;
       img.data[i * 4 + 2] = b;
-      img.data[i * 4 + 3] = cnt[i]! > 0 ? 235 : 40;
+      img.data[i * 4 + 3] = c > 0 ? 235 : 40;
     }
     ctx.putImageData(img, 0, 0);
     const tex = new THREE.CanvasTexture(canvas);

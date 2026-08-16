@@ -47,10 +47,7 @@ export function listRuns(): Promise<SavedRun[]> {
 }
 
 export function getRun(id: string): Promise<SavedRun | undefined> {
-  return tx<SavedRun | undefined>(
-    "readonly",
-    (s) => s.get(id) as IDBRequest<SavedRun | undefined>,
-  );
+  return tx<SavedRun | undefined>("readonly", (s) => s.get(id) as IDBRequest<SavedRun | undefined>);
 }
 
 export function deleteRun(id: string): Promise<undefined> {

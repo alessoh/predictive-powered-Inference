@@ -17,14 +17,21 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "api"))
 
-from step import MAX_BODY_BYTES, advance  # noqa: E402
-
 from ppi_core.serialize import canonical_json  # noqa: E402
+from step import MAX_BODY_BYTES, advance  # noqa: E402
 
 PORT = 8765
 
 
 class Handler(BaseHTTPRequestHandler):
+    # HTTP/1.1 keep-alive: Next's dev proxy reuses connections, and the
+    # default HTTP/1.0 close-per-request produces sporadic ECONNRESET
+    # ("Failed to fetch") mid-run.
+    protocol_version = "HTTP/1.1"
+
+    def do_GET(self):  # noqa: N802 - health check for Playwright webServer
+        self._reply(200, {"ok": True})
+
     def do_POST(self):  # noqa: N802
         if self.path.rstrip("/") != "/api/step":
             self._reply(404, {"error": "unknown path"})

@@ -1,0 +1,80 @@
+# CI gate — every check the GAUNTLET LOOP's automated gate requires:
+# type checks (no suppressions), lint (no convenience disables), unit and
+# integration tests (TS + Python), the coverage simulation, and Playwright
+# end-to-end flows at three viewports. The frame-time gate needs a real
+# GPU and runs on developer machines via `npm run test:perf` (documented
+# in docs/03-design.md); Lighthouse runs against preview deploys.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Install Python dependencies
+        run: |
+          pip install -r requirements-dev.txt
+          pip install -e .
+
+      - name: Typecheck (tsc, no suppressions)
+        run: |
+          npx next typegen
+          npm run typecheck
+
+      - name: Lint (ESLint + ruff)
+        run: |
+          npm run lint
+          ruff check reference python api scripts
+          ruff format --check reference python api scripts
+
+      - name: Format check (Prettier)
+        run: npm run format:check
+
+      - name: Python tests (reference + core, 87 tests)
+        run: python -m pytest reference python/tests -q
+
+      - name: Coverage simulation gate (>=93% at nominal 95%)
+        run: python -m ppi_core.simulate --check
+
+      - name: Unit tests (Vitest)
+        run: npx vitest run
+
+      - name: Build (Next.js production)
+        run: npm run build
+
+      - name: Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: End-to-end (desktop + tablet + mobile)
+        run: npx playwright test --project=desktop --project=tablet --project=mobile
+        env:
+          CI: "true"
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
