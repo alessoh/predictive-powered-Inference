@@ -59,3 +59,6 @@ htmlcov/
 
 # feed cache (runtime, not fixtures)
 /.cache/
+
+# python packaging artifacts
+*.egg-info/
