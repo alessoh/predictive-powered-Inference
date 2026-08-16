@@ -48,3 +48,63 @@ builder-side events before critic review, recorded for auditability:
 Test counts: 31 reference + 55 production = 86, all passing. `--check` gate: PASS, ~75s.
 
 **Status: submitted to critic (round 1).**
+
+## Round 1 — critic verdict: REJECTED (11 open objections)
+
+The critic verified: reference match on its own adversarial data (diffs 0.0–4.4e-16),
+weighted-moment algebra, no label-value leak into propensities, determinism unbreakable
+cross-process/cross-PYTHONHASHSEED, policy_gain disclosure adequate, budget cap honored.
+Then it broke the pool-mode layer:
+
+1. **BLOCKER — complement baseline biased under prediction-correlated selection.** The
+   "telescoping" derivation assumed Cov(π, f) = 0; every gate scenario used symmetric
+   uncertainty, so the gate structurally could not see it. Critic measured coverage
+   **0.133** (ppi) at budget/pool = 0.45 with quadratic uncertainty, decomposing the bias
+   to the complement-f tilt (−0.284 of −0.296 total).
+2. **MAJOR — martingale docstring did not describe the implemented weights** (plug-in
+   cumulative-inclusion weights; per-round HT unbiasedness claim false as stated).
+3. **MAJOR — certification claims for simulations that did not exist** (weighted quantile,
+   runner OLS/logistic loops).
+4. **MAJOR — runner bootstrap omitted the pool-mode component** and was displayed as an
+   equal-status interval (measured 17% narrower than analytic on the gate's own design).
+5. **MAJOR — weighted z/t(n_eff−1) CIs degrade below the gate under legal weight skew**
+   (0.9187 measured through production selection_probabilities), with no diagnostic.
+6–11. **MINOR** — thinning/survival inconsistency; skipped-rep denominators; duplicated
+   RNG stream map; missing init_state shape validation; VR/diversity policies never gated
+   at powered reps; OLS/logistic coverage averaged across coordinates.
+
+## Round 2 — builder response (all 11 addressed)
+
+1. **Full-pool baseline** (the critic's proposed fix, verified correct by derivation):
+   pool mode now passes the ENTIRE pool's predictions as the baseline — a fixed pool
+   statistic selection cannot tilt; variance decomposes by conditioning on the pool
+   (selection term + population-score term over M; the λ-cancellation is an identity over
+   the pool). The killer design is now the permanently gated `active_loop_asym` scenario:
+   coverage **0.96** (was 0.133). λ* is mode-consistent (pool mode minimizes the variance
+   pool mode reports).
+2. Runner docstring rewritten: plug-in weights, exact HT unbiasedness NOT claimed,
+   empirical certification stated as the actual basis.
+3. Gate scenarios added: `runner_quantile` (weighted quantile loop, 0.985/0.96),
+   `runner_ols` (worst-coordinate gated, 0.96–0.98), `active_loop_mean_vr` (0.9525),
+   `active_loop_mean_div` (0.9575), all at powered reps. False claims in docstrings
+   corrected to point at the real scenarios.
+4. Runner bootstrap re-targeted honestly: it resamples the rectifier against the fixed
+   full-pool baseline and is tagged `target: "pool_mean"`; gated against the pool mean
+   (`runner_bootstrap`: 0.95). Analytic CI targets the superpopulation; the dashboard must
+   label the two as answering different questions.
+5. Weighted CIs now use t with **Satterthwaite df** ((Σŵ²)²/Σŵ⁴ − 1; = n−1 uniform), and
+   `n_eff` is emitted in every weighted result. New gated `weight_skew_mean` scenario at the
+   critic's exact tilt: classical_ipw **0.9375** (was 0.9187), ppi_ipw 0.9625.
+6. Survival bookkeeping uses thinned probabilities. 7. Skipped reps excluded from
+   denominators. 8. Single RNG stream source (`bootstrap.spawn_stream_rng`). 9. init_state
+   validates y_pool/x_pool shapes. 10. VR + diversity gated at 400 reps (see 3).
+   11. `_summary_vec` gates the WORST coordinate (per-coordinate rates reported).
+
+Also added: `test_runner_weights.py` — independent replay of every selection round through
+the public policy API asserting the runner's stored weights match 1−Π(1−π_r) recomputation
+to 1e-12. Cross-platform determinism claim narrowed to single-platform in
+docs/01-architecture.md.
+
+Full gate: **PASS, zero failures, 42 gated/reported rows, ~4.5 min** (seed 20260816).
+
+**Status: resubmitted for round 3.**

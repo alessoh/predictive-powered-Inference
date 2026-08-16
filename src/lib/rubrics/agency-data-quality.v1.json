@@ -1,0 +1,43 @@
+{
+  "id": "agency-data-quality",
+  "version": 1,
+  "title": "Agency data quality rubric",
+  "description": "Criteria-driven review of a state DOT's work-zone data practice, computed from its own published feed. Every criterion names the record fields that ground it; the verification agent recomputes each score and refuses ungrounded claims.",
+  "criteria": [
+    {
+      "id": "date-verification",
+      "question": "What fraction of work-zone records carry verified start AND end dates?",
+      "weight": 0.25,
+      "groundingFields": ["startDate", "endDate", "provenance.fields.startDate", "provenance.fields.endDate"],
+      "metric": "fraction_verified_dates"
+    },
+    {
+      "id": "impact-completeness",
+      "question": "What fraction of records declare a recognized vehicle_impact value?",
+      "weight": 0.25,
+      "groundingFields": ["vehicleImpact"],
+      "metric": "fraction_known_impact"
+    },
+    {
+      "id": "geometry-completeness",
+      "question": "What fraction of records include usable geometry?",
+      "weight": 0.2,
+      "groundingFields": ["centroid"],
+      "metric": "fraction_with_geometry"
+    },
+    {
+      "id": "description-quality",
+      "question": "What fraction of records carry a substantive free-text description (>= 40 characters)?",
+      "weight": 0.15,
+      "groundingFields": ["description"],
+      "metric": "fraction_substantive_description"
+    },
+    {
+      "id": "duration-derivability",
+      "question": "What fraction of records allow a non-negative duration to be derived from their dates?",
+      "weight": 0.15,
+      "groundingFields": ["durationDays"],
+      "metric": "fraction_derivable_duration"
+    }
+  ]
+}

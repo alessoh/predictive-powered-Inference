@@ -73,17 +73,38 @@ Naive active selection makes the labeled set non-representative and silently bia
 - Consequence, stated honestly: IPW restores unbiasedness at the cost of variance when propensities are skewed; the floor bounds the weights, and the coverage simulation runs **with active selection on**, so the ≥93% empirical coverage gate certifies the corrected pipeline, not just i.i.d. sampling. If power-tuned PPI + IPW interact badly in simulation, that result is reported in the dashboard and the gauntlet log rather than smoothed over.
 - The random baseline (uniform sampling, weights ≡ 1) is always run alongside and always plotted.
 
-**Pool-mode variance (added 2026-08-16, after the full-loop simulation caught it):** the runner
-labels a subset of one finite pool of M records and uses the remainder as the unlabeled sample,
-while two-sample PPI assumes independent labeled/unlabeled draws. Estimating a superpopulation
-parameter from one pool adds a finite-pool variance component; at the pool level the λ-terms
-telescope, leaving the plain unit-level score (y for the mean; x(x′θ−y) for OLS; x(σ−y) for
-logistic; 1{y≤t}−F for the CDF), whose population (co)variance divided by M is added to the
-reported variance when `pool_size` is passed. Without it the full-loop simulation measured
-0.9275 coverage at nominal 0.95; with it, 0.9725. Multi-round adaptive selection uses realized
-cumulative inclusion probabilities (martingale-conditional correctness; residual approximation
-certified by the same simulation), and the hard budget cap thins Poisson overflow uniformly
-with a propensity correction.
+**Pool-mode estimation (revised 2026-08-16 after gauntlet round 1 of the statistical core):**
+the runner labels a subset of one finite pool of M records. Two-sample PPI assumes independent
+labeled/unlabeled draws, so pool mode differs in two audited ways:
+
+1. **Full-pool baseline.** The estimator's "unlabeled" term uses the predictions of the
+   *entire pool* — a fixed pool statistic — never the pool complement. (The complement
+   baseline is tilted by any selection that correlates with predictions; the round-1 critic
+   measured 0.133 coverage at nominal 0.95 under quadratic uncertainty with budget/pool =
+   0.45. With the full-pool baseline the same design covers 0.96, and the scenario is
+   permanently gated as `active_loop_asym`.)
+2. **Variance by conditioning on the pool.** Selection component: weighted variance of the
+   labeled rectifier (the baseline is constant given the pool). Pool-draw component: the
+   population (co)variance of the plain unit-level score (y for the mean; x(x′θ−y) for OLS;
+   x(σ−y) for logistic; 1{y≤t}−F for the CDF) over M — the λ-terms cancel as an identity
+   over the pool, not as an assumption about selection.
+
+Multi-round adaptive selection uses realized cumulative inclusion probabilities as **plug-in
+weights** — stated honestly: they are not exact Horvitz–Thompson weights (exact inclusion
+probabilities are uncomputable under adaptive designs), and their adequacy is certified
+empirically by gated end-to-end scenarios including asymmetric-uncertainty designs built to
+stress exactly this approximation. The hard budget cap thins Poisson overflow uniformly with
+a propensity correction, and survival bookkeeping uses the same thinned probabilities.
+
+Weighted CIs use Student-t critical values with Satterthwaite effective df
+((Σŵ²)²/Σŵ⁴ − 1; = n−1 under uniform weights), and every weighted result emits `n_eff` as a
+skew diagnostic the dashboard must surface. The runner's bootstrap targets the **pool mean**
+(selection uncertainty only) and is labeled as such; the analytic CI targets the
+superpopulation — different questions, both shown, never conflated.
+
+Determinism claims are **single-platform**: byte-identical reruns are asserted by tests on
+the build machine (and later in CI on its fixed runner image); cross-platform bit-identity
+of BLAS/BFGS results is not claimed anywhere.
 
 ## Multi-agent DOT workflow
 

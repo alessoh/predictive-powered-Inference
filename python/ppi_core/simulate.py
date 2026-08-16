@@ -51,6 +51,13 @@ def _rng(scenario: str, seed: int) -> np.random.Generator:
         "bootstrap_mean": 15,
         "active_loop_mean": 16,
         "policy_gain": 17,
+        "active_loop_mean_vr": 18,
+        "active_loop_mean_div": 19,
+        "active_loop_asym": 20,
+        "weight_skew_mean": 21,
+        "runner_quantile": 22,
+        "runner_ols": 23,
+        "runner_bootstrap": 24,
     }
     return np.random.Generator(
         np.random.PCG64(np.random.SeedSequence(seed, spawn_key=(4, known[scenario])))
@@ -76,6 +83,21 @@ def _summary(hits: dict, widths: dict, reps: int) -> dict:
         }
         for name in hits
     }
+
+
+def _summary_vec(hits_per_coord: dict, widths: dict, reps: int) -> dict:
+    """Vector estimands gate the WORST coordinate, not the average —
+    averaging can hide one undercovering coefficient (review, MINOR-11)."""
+    out = {}
+    for name, coord_hits in hits_per_coord.items():
+        per_coord = [round(h / reps, 4) for h in coord_hits]
+        out[name] = {
+            "coverage": min(per_coord),
+            "coverage_per_coord": per_coord,
+            "mean_width": round(float(np.mean(widths[name])), 6),
+            "reps": reps,
+        }
+    return out
 
 
 def sim_mean(seed: int = MASTER_SEED, reps: int = 2000, n: int = 80, big_n: int = 1600) -> dict:
@@ -122,9 +144,8 @@ def sim_quantile(seed: int = MASTER_SEED, reps: int = 500, n: int = 150, big_n: 
 def sim_ols(seed: int = MASTER_SEED, reps: int = 500, n: int = 120, big_n: int = 2000) -> dict:
     rng = _rng("ols", seed)
     theta = np.array([1.5, -2.0, 0.75])
-    hits = {"classical": 0.0, "ppi": 0.0, "ppi_power_tuned": 0.0}
-    widths = {k: [] for k in hits}
-    denom = theta.size
+    hits = {k: [0, 0, 0] for k in ("classical", "ppi", "ppi_power_tuned")}
+    widths: dict = {k: [] for k in hits}
     for _ in range(reps):
         x_lab = rng.normal(0.0, 1.0, (n, 3))
         x_unl = rng.normal(0.0, 1.0, (big_n, 3))
@@ -137,17 +158,17 @@ def sim_ols(seed: int = MASTER_SEED, reps: int = 500, n: int = 120, big_n: int =
             "ppi_power_tuned": est.ols_ppi_power_tuned(x_lab, y_lab, f_lab, x_unl, f_unl),
         }
         for k, o in outs.items():
-            covered = _covers_vec(o, theta)
-            hits[k] += sum(covered) / denom
+            for j, c in enumerate(_covers_vec(o, theta)):
+                hits[k][j] += c
             widths[k].append(float(np.mean(np.asarray(o["ci_upper"]) - np.asarray(o["ci_lower"]))))
-    return _summary(hits, widths, reps)
+    return _summary_vec(hits, widths, reps)
 
 
 def sim_logistic(seed: int = MASTER_SEED, reps: int = 300, n: int = 300, big_n: int = 3000) -> dict:
     rng = _rng("logistic", seed)
     theta = np.array([0.8, -1.2])
-    hits = {"classical": 0.0, "ppi": 0.0}
-    widths = {k: [] for k in hits}
+    hits = {k: [0, 0] for k in ("classical", "ppi")}
+    widths: dict = {k: [] for k in hits}
     for _ in range(reps):
         x_lab = rng.normal(0.0, 1.0, (n, 2))
         x_unl = rng.normal(0.0, 1.0, (big_n, 2))
@@ -162,10 +183,10 @@ def sim_logistic(seed: int = MASTER_SEED, reps: int = 300, n: int = 300, big_n: 
             "ppi": est.logistic_ppi(x_lab, y_lab, f_lab, x_unl, f_unl),
         }
         for k, o in outs.items():
-            covered = _covers_vec(o, theta)
-            hits[k] += sum(covered) / theta.size
+            for j, c in enumerate(_covers_vec(o, theta)):
+                hits[k][j] += c
             widths[k].append(float(np.mean(np.asarray(o["ci_upper"]) - np.asarray(o["ci_lower"]))))
-    return _summary(hits, widths, reps)
+    return _summary_vec(hits, widths, reps)
 
 
 def sim_active_ipw_mean(
@@ -188,6 +209,8 @@ def sim_active_ipw_mean(
     truth = 4.0
     hits = {"ppi_ipw": 0, "ppi_naive": 0, "classical_ipw": 0}
     widths = {k: [] for k in hits}
+    done = 0  # actual completed reps (review MINOR-7: skipped reps must
+    # not inflate the denominator)
     for _ in range(reps):
         y_pool = rng.normal(truth, 2.0, pool)
         f_pool = 0.4 * y_pool + rng.normal(0.0, 0.5, pool)
@@ -198,6 +221,7 @@ def sim_active_ipw_mean(
         picked = rng.uniform(size=pool) < prob
         if picked.sum() < 5:
             continue
+        done += 1
         y, f, w = y_pool[picked], f_pool[picked], 1.0 / prob[picked]
         outs = {
             "ppi_ipw": est.mean_ppi(y, f, f_unl, w=w),
@@ -207,7 +231,7 @@ def sim_active_ipw_mean(
         for k, o in outs.items():
             hits[k] += _covers(o, truth)
             widths[k].append(o["ci_upper"] - o["ci_lower"])
-    return _summary(hits, widths, reps)
+    return _summary(hits, widths, done)
 
 
 def sim_bootstrap_mean(
@@ -234,28 +258,108 @@ def sim_bootstrap_mean(
     return _summary(hits, widths, reps)
 
 
-def sim_active_loop_mean(seed: int = MASTER_SEED, reps: int = 400, pool: int = 1200) -> dict:
+def sim_active_loop_mean(
+    seed: int = MASTER_SEED,
+    reps: int = 400,
+    pool: int = 1200,
+    policy: str = "uncertainty",
+    asymmetric_u: bool = False,
+    budget: int = 200,
+    stream: str = "active_loop_mean",
+) -> dict:
     """The strongest gate: the *entire* experiment runner end-to-end.
 
     Each replication draws a fresh pool, runs a full multi-round active
-    experiment (uncertainty policy, cumulative propensities, hard budget
-    cap with thinning) through ppi_core.runner, and checks the final
-    round's IPW-weighted CIs against the known superpopulation truth.
-    This certifies the composite adaptive pipeline, not just one round.
+    experiment (cumulative propensities, hard budget cap with thinning)
+    through ppi_core.runner, and checks the final round's IPW-weighted
+    CIs against the known superpopulation truth.
+
+    ``asymmetric_u=True`` makes oracle uncertainty increase with the
+    prediction LEVEL (quadratic in f), so selection correlates with f —
+    the design that exposed the round-1 complement-baseline blocker
+    (coverage 0.133).  It is gated to keep that failure mode dead.
     """
-    rng = _rng("active_loop_mean", seed)
+    rng = _rng(stream, seed)
     truth = 3.0
     hits = {"ppi": 0, "ppi_power_tuned": 0, "classical": 0}
     widths = {k: [] for k in hits}
     for _ in range(reps):
         y = rng.normal(truth, 1.5, pool)
         f = 0.7 * y + rng.normal(0.0, 0.5, pool)
-        u = np.abs(f - f.mean()) / 2.0 + rng.uniform(0.1, 0.3, pool)
+        if asymmetric_u:
+            u = 0.1 + ((f - f.min()) / (np.ptp(f) + 1e-9)) ** 2  # rises with f
+        else:
+            u = np.abs(f - f.mean()) / 2.0 + rng.uniform(0.1, 0.3, pool)
+        x = np.column_stack([np.ones(pool), f])  # features for diversity
         cfg = {
             "estimand": "mean",
-            "policy": "uncertainty",
+            "policy": policy,
             "batch_size": 50,
-            "label_budget": 200,
+            "label_budget": budget,
+            "seed": int(rng.integers(0, 2**31)),
+            "n_boot": 0,
+        }
+        state = runner.init_state(cfg, {"f_pool": f, "u_pool": u, "x_pool": x, "y_pool": y})
+        final = runner.run_to_completion(state)
+        last = final["history"][-1]["estimates"]
+        for k in hits:
+            o = last[k]
+            hits[k] += _covers(o, truth)
+            widths[k].append(o["ci_upper"] - o["ci_lower"])
+    return _summary(hits, widths, reps)
+
+
+def sim_weight_skew_mean(seed: int = MASTER_SEED, reps: int = 800, pool: int = 2000) -> dict:
+    """Single-round IPW under an aggressively informative exponential
+    tilt through the production selection_probabilities — the regime
+    where review round 1 measured classical z-coverage 0.923.  Weighted
+    CIs now use t(df = n_eff - 1); this row keeps that fix honest.
+    """
+    from ppi_core.policies import selection_probabilities
+
+    rng = _rng("weight_skew_mean", seed)
+    truth = 1.0
+    hits = {"classical_ipw": 0, "ppi_ipw": 0}
+    widths = {k: [] for k in hits}
+    done = 0
+    for _ in range(reps):
+        y = rng.normal(truth, 2.0, pool)
+        f = 0.6 * y + rng.normal(0.0, 0.8, pool)
+        scores = np.exp(1.8 * (f - f.mean()) / (f.std() + 1e-12))
+        prob = selection_probabilities(scores, 150)
+        picked = rng.uniform(size=pool) < prob
+        if picked.sum() < 5:
+            continue
+        done += 1
+        w = 1.0 / prob[picked]
+        outs = {
+            "classical_ipw": est.mean_classical(y[picked], w=w),
+            "ppi_ipw": est.mean_ppi(y[picked], f[picked], f, w=w, pool_size=pool),
+        }
+        for k, o in outs.items():
+            hits[k] += _covers(o, truth)
+            widths[k].append(o["ci_upper"] - o["ci_lower"])
+    return _summary(hits, widths, done)
+
+
+def sim_runner_quantile(seed: int = MASTER_SEED, reps: int = 200, pool: int = 1200) -> dict:
+    """Full-loop quantile (median) with asymmetric uncertainty: the
+    weighted-quantile path's coverage certification (review MAJOR-3)."""
+    rng = _rng("runner_quantile", seed)
+    mu, sigma = 1.0, 2.0
+    truth = mu  # median of N(mu, sigma)
+    hits = {"classical": 0, "ppi": 0}
+    widths = {k: [] for k in hits}
+    for _ in range(reps):
+        y = rng.normal(mu, sigma, pool)
+        f = y + rng.normal(0.0, 0.6, pool)
+        u = 0.1 + ((f - f.min()) / (np.ptp(f) + 1e-9)) ** 2
+        cfg = {
+            "estimand": "quantile",
+            "quantile_p": 0.5,
+            "policy": "variance_reduction",
+            "batch_size": 60,
+            "label_budget": 240,
             "seed": int(rng.integers(0, 2**31)),
             "n_boot": 0,
         }
@@ -266,6 +370,65 @@ def sim_active_loop_mean(seed: int = MASTER_SEED, reps: int = 400, pool: int = 1
             o = last[k]
             hits[k] += _covers(o, truth)
             widths[k].append(o["ci_upper"] - o["ci_lower"])
+    return _summary(hits, widths, reps)
+
+
+def sim_runner_ols(seed: int = MASTER_SEED, reps: int = 200, pool: int = 1200) -> dict:
+    """Full-loop OLS with asymmetric uncertainty; worst-coordinate gated."""
+    rng = _rng("runner_ols", seed)
+    theta = np.array([1.0, -0.5])
+    hits = {k: [0, 0] for k in ("classical", "ppi", "ppi_power_tuned")}
+    widths: dict = {k: [] for k in hits}
+    for _ in range(reps):
+        x = rng.normal(0.0, 1.0, (pool, 2))
+        y = x @ theta + rng.normal(0.0, 0.8, pool)
+        f = x @ theta + rng.normal(0.0, 0.35, pool)
+        u = 0.1 + ((f - f.min()) / (np.ptp(f) + 1e-9)) ** 2
+        cfg = {
+            "estimand": "ols",
+            "policy": "variance_reduction",
+            "batch_size": 60,
+            "label_budget": 240,
+            "seed": int(rng.integers(0, 2**31)),
+            "n_boot": 0,
+        }
+        state = runner.init_state(cfg, {"f_pool": f, "u_pool": u, "x_pool": x, "y_pool": y})
+        final = runner.run_to_completion(state)
+        last = final["history"][-1]["estimates"]
+        for k in hits:
+            o = last[k]
+            for j, c in enumerate(_covers_vec(o, theta)):
+                hits[k][j] += c
+            widths[k].append(float(np.mean(np.asarray(o["ci_upper"]) - np.asarray(o["ci_lower"]))))
+    return _summary_vec(hits, widths, reps)
+
+
+def sim_runner_bootstrap(seed: int = MASTER_SEED, reps: int = 300, pool: int = 1200) -> dict:
+    """Runner bootstrap CI coverage against its OWN target: the pool
+    mean (docstring of runner._bootstrap_step).  The analytic CI targets
+    the superpopulation and is gated elsewhere; conflating the two was
+    review MAJOR-4."""
+    rng = _rng("runner_bootstrap", seed)
+    hits = {"bootstrap_pool_mean": 0}
+    widths: dict = {"bootstrap_pool_mean": []}
+    for _ in range(reps):
+        y = rng.normal(-2.0, 1.5, pool)
+        f = 0.7 * y + rng.normal(0.0, 0.5, pool)
+        u = np.abs(f - f.mean()) / 2.0 + rng.uniform(0.1, 0.3, pool)
+        pool_truth = float(y.mean())
+        cfg = {
+            "estimand": "mean",
+            "policy": "uncertainty",
+            "batch_size": 60,
+            "label_budget": 120,
+            "seed": int(rng.integers(0, 2**31)),
+            "n_boot": 200,
+        }
+        state = runner.init_state(cfg, {"f_pool": f, "u_pool": u, "y_pool": y})
+        final = runner.run_to_completion(state)
+        boot = final["history"][-1]["bootstrap"]
+        hits["bootstrap_pool_mean"] += boot["ci_lower"] <= pool_truth <= boot["ci_upper"]
+        widths["bootstrap_pool_mean"].append(boot["ci_upper"] - boot["ci_lower"])
     return _summary(hits, widths, reps)
 
 
@@ -323,10 +486,12 @@ UNGATED = {
 }
 
 
-def run_all(seed: int = MASTER_SEED, fast: bool = False) -> dict:
+def run_all(seed: int = MASTER_SEED, fast: bool = False, div: int | None = None) -> dict:
     """Run every scenario; fast=True cuts replication counts ~5x (for
-    smoke tests only — the gate uses full counts)."""
-    div = 5 if fast else 1
+    smoke tests only — the gate uses full counts).  ``div`` overrides the
+    divisor directly (determinism tests use a large one for speed)."""
+    if div is None:
+        div = 5 if fast else 1
     report = {
         "seed": seed,
         "nominal_level": 1.0 - NOMINAL_ALPHA,
@@ -339,6 +504,24 @@ def run_all(seed: int = MASTER_SEED, fast: bool = False) -> dict:
             "active_ipw_mean": sim_active_ipw_mean(seed, reps=1000 // div),
             "bootstrap_mean": sim_bootstrap_mean(seed, reps=300 // div),
             "active_loop_mean": sim_active_loop_mean(seed, reps=400 // div),
+            "active_loop_mean_vr": sim_active_loop_mean(
+                seed, reps=400 // div, policy="variance_reduction", stream="active_loop_mean_vr"
+            ),
+            "active_loop_mean_div": sim_active_loop_mean(
+                seed, reps=400 // div, policy="diversity", stream="active_loop_mean_div"
+            ),
+            "active_loop_asym": sim_active_loop_mean(
+                seed,
+                reps=400 // div,
+                policy="uncertainty",
+                asymmetric_u=True,
+                budget=540,  # budget/pool = 0.45, the round-1 blocker regime
+                stream="active_loop_asym",
+            ),
+            "weight_skew_mean": sim_weight_skew_mean(seed, reps=800 // div),
+            "runner_quantile": sim_runner_quantile(seed, reps=200 // div),
+            "runner_ols": sim_runner_ols(seed, reps=200 // div),
+            "runner_bootstrap": sim_runner_bootstrap(seed, reps=300 // div),
             "policy_gain": sim_policy_gain(seed, reps=60 // div),
         },
     }

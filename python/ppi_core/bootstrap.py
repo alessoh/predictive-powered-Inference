@@ -85,6 +85,14 @@ def spawn_block_rngs(master_seed: int, n_blocks: int, stream: str = "bootstrap")
     return [np.random.Generator(np.random.PCG64(c)) for c in children]
 
 
+def spawn_stream_rng(master_seed: int, stream: str, index: int) -> np.random.Generator:
+    """Single generator for (master_seed, stream, index) — the one place
+    stream names map to spawn keys (used by the runner and simulations)."""
+    return np.random.Generator(
+        np.random.PCG64(np.random.SeedSequence(master_seed, spawn_key=(_stream_key(stream), index)))
+    )
+
+
 def _stream_key(stream: str) -> int:
     """Stable small integer for a stream name (documented, not hashed)."""
     known = {"sampling": 1, "bootstrap": 2, "policy": 3, "simulation": 4}

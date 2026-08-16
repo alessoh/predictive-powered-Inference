@@ -11,16 +11,28 @@ Sampling / weighting scheme (docs/01-architecture.md):
 
 * Each round, the active policy scores the still-unlabeled pool and the
   scores become Poisson inclusion probabilities with a uniform mixture
-  floor (ppi_core.policies).
-* Selected points carry IPW weights from their *realized cumulative*
-  inclusion probability pi_cum = 1 - prod_r(1 - pi_r) over the rounds
-  they were available.  Round propensities depend only on predictions,
-  features, and selection history — never on revealed label values — so
-  each round's HT term is conditionally unbiased given the past
-  (martingale argument).  Exact unconditional HT unbiasedness does not
-  hold under adaptive designs; the residual approximation is certified
-  by the full-loop coverage scenario in ppi_core.simulate.
-* Labeled points leave the unlabeled PPI term (disjoint samples).
+  floor (ppi_core.policies).  Round propensities depend only on
+  predictions, features, and selection history — never on revealed
+  label values.
+* Selected points carry IPW weights 1/pi_cum from their *realized
+  cumulative* inclusion probability pi_cum = 1 - prod_r(1 - pi_r) over
+  the rounds they were available.  Honest status of this scheme
+  (rewritten after review round 1): these are plug-in weights, not exact
+  Horvitz-Thompson weights — under an adaptive design the exact
+  inclusion probability of an already-labeled point is not computable,
+  and the plain per-round-HT decomposition does NOT make the combined
+  estimator exactly unbiased.  What holds: the weights are measurable at
+  selection time, the Hajek normalization cancels the common inflation
+  to first order, and the end-to-end coverage of the resulting intervals
+  is certified empirically by the gated full-loop scenarios in
+  ppi_core.simulate (including asymmetric-uncertainty designs chosen to
+  stress exactly this approximation).
+* Estimation runs in POOL MODE: the estimator baseline uses the
+  predictions of the ENTIRE pool (a fixed pool statistic that selection
+  cannot tilt), not the pool complement.  Review round 1 measured
+  coverage 0.133 with the complement baseline under prediction-
+  correlated selection; the full-pool baseline removes that failure
+  mode by construction.  See ppi_core.estimators module docstring.
 
 Label acquisition: in ``synthetic``/fixture mode the pool includes
 hidden ground truth revealed only when budget is spent.  In ``live``
@@ -35,7 +47,7 @@ import numpy as np
 
 from ppi_core import estimators as est
 from ppi_core import policies
-from ppi_core.bootstrap import bootstrap_estimates
+from ppi_core.bootstrap import bootstrap_estimates, spawn_stream_rng
 from ppi_core.serialize import canonical_digest
 
 STATE_VERSION = 1
@@ -63,6 +75,10 @@ def init_state(config: dict, data: dict) -> dict:
         raise ValueError("u_pool shape mismatch")
     if estimand in ("ols", "logistic") and "x_pool" not in data:
         raise ValueError(f"{estimand} requires x_pool")
+    if "x_pool" in data and np.asarray(data["x_pool"]).shape[0] != m:
+        raise ValueError("x_pool row count must match f_pool length")
+    if "y_pool" in data and np.asarray(data["y_pool"]).shape != (m,):
+        raise ValueError("y_pool shape must match f_pool length")
     if config["label_budget"] > m:
         raise ValueError("label budget exceeds pool size")
 
@@ -105,10 +121,9 @@ def init_state(config: dict, data: dict) -> dict:
 
 
 def _round_rng(seed: int, round_idx: int, purpose: str) -> np.random.Generator:
-    purpose_key = {"policy": 3, "bootstrap": 2}[purpose]
-    return np.random.Generator(
-        np.random.PCG64(np.random.SeedSequence(seed, spawn_key=(purpose_key, round_idx)))
-    )
+    # Stream keys come from bootstrap._stream_key via spawn_stream_rng —
+    # single source of truth (review round 1, MINOR-8).
+    return spawn_stream_rng(seed, purpose, round_idx)
 
 
 def _unlabeled_mask(state: dict) -> np.ndarray:
@@ -124,44 +139,44 @@ def _estimates(state: dict) -> dict:
     cfg = state["config"]
     alpha = cfg["alpha"]
     f_pool = np.asarray(state["data"]["f_pool"], dtype=float)
-    mask = _unlabeled_mask(state)
     idx = np.asarray(state["labeled_idx"], dtype=int)
     y = np.asarray(state["labeled_y"], dtype=float)
     w = np.asarray(state["labeled_w"], dtype=float)
     f_lab = f_pool[idx]
-    f_unl = f_pool[mask]
-    # Pool mode: labeled + unlabeled come from one finite pool of M
-    # records; estimators add the finite-pool superpopulation variance
-    # component (see ppi_core.estimators module docstring).
+    # POOL MODE with the FULL-pool baseline: the estimator's "unlabeled"
+    # sample is the entire pool's predictions (a fixed pool statistic
+    # that selection cannot tilt) — never the complement (review round 1
+    # BLOCKER: complement baseline gave 0.133 coverage under prediction-
+    # correlated selection). See ppi_core.estimators module docstring.
     m = int(f_pool.size)
 
     if cfg["estimand"] == "mean":
         return {
             "classical": est.mean_classical(y, w=w, alpha=alpha, pool_size=m),
-            "ppi": est.mean_ppi(y, f_lab, f_unl, w=w, alpha=alpha, pool_size=m),
+            "ppi": est.mean_ppi(y, f_lab, f_pool, w=w, alpha=alpha, pool_size=m),
             "ppi_power_tuned": est.mean_ppi_power_tuned(
-                y, f_lab, f_unl, w=w, alpha=alpha, pool_size=m
+                y, f_lab, f_pool, w=w, alpha=alpha, pool_size=m
             ),
         }
     if cfg["estimand"] == "quantile":
         p = cfg["quantile_p"]
         return {
             "classical": est.quantile_classical(y, p, w=w, alpha=alpha, pool_size=m),
-            "ppi": est.quantile_ppi(y, f_lab, f_unl, p, w=w, alpha=alpha, pool_size=m),
+            "ppi": est.quantile_ppi(y, f_lab, f_pool, p, w=w, alpha=alpha, pool_size=m),
         }
     x_pool = np.asarray(state["data"]["x_pool"], dtype=float)
-    x_lab, x_unl = x_pool[idx], x_pool[mask]
+    x_lab = x_pool[idx]
     if cfg["estimand"] == "ols":
         return {
             "classical": est.ols_classical(x_lab, y, w=w, alpha=alpha, pool_size=m),
-            "ppi": est.ols_ppi(x_lab, y, f_lab, x_unl, f_unl, w=w, alpha=alpha, pool_size=m),
+            "ppi": est.ols_ppi(x_lab, y, f_lab, x_pool, f_pool, w=w, alpha=alpha, pool_size=m),
             "ppi_power_tuned": est.ols_ppi_power_tuned(
-                x_lab, y, f_lab, x_unl, f_unl, w=w, alpha=alpha, pool_size=m
+                x_lab, y, f_lab, x_pool, f_pool, w=w, alpha=alpha, pool_size=m
             ),
         }
     return {
         "classical": est.logistic_classical(x_lab, y, w=w, alpha=alpha, pool_size=m),
-        "ppi": est.logistic_ppi(x_lab, y, f_lab, x_unl, f_unl, w=w, alpha=alpha, pool_size=m),
+        "ppi": est.logistic_ppi(x_lab, y, f_lab, x_pool, f_pool, w=w, alpha=alpha, pool_size=m),
     }
 
 
@@ -209,9 +224,11 @@ def _select(state: dict) -> dict:
 
     # Update never-selected survival probabilities for the whole pool and
     # derive cumulative-inclusion IPW weights for the selected points.
+    # Survival uses the same thinned effective probability as the weights
+    # (review round 1, MINOR-6: inconsistent survival was a latent trap).
     q_never = np.asarray(state["q_never"], dtype=float)
     q_prev = q_never[pool_idx].copy()
-    q_never[pool_idx] *= 1.0 - prob
+    q_never[pool_idx] *= 1.0 - prob * thin
     sel_global = pool_idx[sel_local]
     pi_cum = 1.0 - q_prev[sel_local] * (1.0 - prob[sel_local] * thin)
     state["q_never"] = q_never.tolist()
@@ -249,26 +266,41 @@ def _absorb_labels(state: dict, labels: np.ndarray | None) -> dict:
 
 
 def _bootstrap_step(state: dict) -> dict:
-    """Advance the in-progress bootstrap by one block."""
+    """Advance the in-progress bootstrap by one block.
+
+    Target honesty (review round 1, MAJOR-4): this bootstrap resamples
+    the labeled rectifier against the FIXED full-pool baseline, so its
+    interval quantifies selection uncertainty for the POOL mean ("mean
+    over these M records"), not the superpopulation mean the analytic CI
+    targets (which adds the pool-draw component).  The result is tagged
+    ``target: "pool_mean"`` and the dashboard labels the two intervals
+    as answering different questions rather than as substitutes.
+    """
     cfg = state["config"]
     boot = state["boot"]
     f_pool = np.asarray(state["data"]["f_pool"], dtype=float)
-    mask = _unlabeled_mask(state)
     idx = np.asarray(state["labeled_idx"], dtype=int)
     y = np.asarray(state["labeled_y"], dtype=float)
     w = np.asarray(state["labeled_w"], dtype=float)
-    f_lab, f_unl = f_pool[idx], f_pool[mask]
+    f_lab = f_pool[idx]
+    lam = mean_lam_star_cached(state)
 
     if cfg["estimand"] != "mean":
         raise RuntimeError("bootstrap currently wired for the mean estimand only")
 
+    baseline = lam * float(f_pool.mean())  # fixed pool statistic
+
     def fn(lab_idx, unl_idx):
-        return est.mean_ppi(y[lab_idx], f_lab[lab_idx], f_unl[unl_idx], w=w[lab_idx])["estimate"]
+        del unl_idx  # baseline is fixed; only the rectifier resamples
+        w_b = w[lab_idx]
+        w_hat = w_b / w_b.sum()
+        rect = float(w_hat @ (y[lab_idx] - lam * f_lab[lab_idx]))
+        return baseline + rect
 
     block_idx = boot["done"] // BOOT_BLOCK
     rng = _round_rng(cfg["seed"], boot["round"] * 10_000 + block_idx, "bootstrap")
     n_todo = min(BOOT_BLOCK, cfg["n_boot"] - boot["done"])
-    samples = bootstrap_estimates(fn, y.size, int(mask.sum()), n_todo, rng)
+    samples = bootstrap_estimates(fn, y.size, 0, n_todo, rng)
     boot["samples"].extend(float(v) for v in samples[:, 0])
     boot["done"] += n_todo
 
@@ -277,6 +309,8 @@ def _bootstrap_step(state: dict) -> dict:
         arr = np.asarray(boot["samples"], dtype=float)
         ci = {
             "method": "bootstrap_percentile",
+            "target": "pool_mean",
+            "lam": lam,
             "n_boot": int(arr.size),
             "alpha": alpha,
             "ci_lower": float(np.percentile(arr, 100 * alpha / 2)),
@@ -285,6 +319,15 @@ def _bootstrap_step(state: dict) -> dict:
         state["history"][-1]["bootstrap"] = ci
         state["boot"] = None
     return state
+
+
+def mean_lam_star_cached(state: dict) -> float:
+    """Lambda for the bootstrap: the pool-mode lam* at current labels."""
+    f_pool = np.asarray(state["data"]["f_pool"], dtype=float)
+    idx = np.asarray(state["labeled_idx"], dtype=int)
+    y = np.asarray(state["labeled_y"], dtype=float)
+    w = np.asarray(state["labeled_w"], dtype=float)
+    return est.mean_lam_star(y, f_pool[idx], f_pool, w=w, pool_size=int(f_pool.size))
 
 
 def step(state: dict, labels: list | None = None) -> dict:

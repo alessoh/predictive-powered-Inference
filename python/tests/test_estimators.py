@@ -28,10 +28,19 @@ def test_uniform_weights_equal_none():
     w = np.full(120, 3.7)  # any constant weight normalizes to uniform
     a = core.mean_ppi(y, f, fu, w=w)
     b = core.mean_ppi(y, f, fu, w=None)
-    # Same estimator, but 3.7/(120*3.7) vs 1/120 differ in the last ulp,
-    # so compare numerically rather than exactly.
-    for key in ("estimate", "se", "ci_lower", "ci_upper"):
+    # Point estimate and SE agree (up to the last ulp of normalization).
+    for key in ("estimate", "se"):
         assert a[key] == pytest.approx(b[key], abs=1e-12), key
+    # CIs deliberately differ: weighted results use t(df = n_eff - 1)
+    # (module docstring); with uniform weights n_eff = n, so the weighted
+    # CI is the t-version of the unweighted z-CI.
+    from scipy import stats
+
+    t_over_z = stats.t.ppf(0.975, 119) / stats.norm.ppf(0.975)
+    width_a = a["ci_upper"] - a["ci_lower"]
+    width_b = b["ci_upper"] - b["ci_lower"]
+    assert width_a == pytest.approx(width_b * t_over_z, rel=1e-9)
+    assert a["n_eff"] == pytest.approx(120.0, abs=0.01)
 
 
 def test_weight_validation():

@@ -12,14 +12,14 @@ from ppi_core.serialize import canonical_digest
 
 
 def test_fast_simulation_report_is_byte_identical():
-    a = simulate.run_all(seed=123, fast=True)
-    b = simulate.run_all(seed=123, fast=True)
+    a = simulate.run_all(seed=123, div=20)
+    b = simulate.run_all(seed=123, div=20)
     assert canonical_digest(a) == canonical_digest(b)
 
 
 def test_simulation_seed_changes_output():
-    a = simulate.run_all(seed=123, fast=True)
-    b = simulate.run_all(seed=124, fast=True)
+    a = simulate.run_all(seed=123, div=20)
+    b = simulate.run_all(seed=124, div=20)
     assert canonical_digest(a) != canonical_digest(b)
 
 

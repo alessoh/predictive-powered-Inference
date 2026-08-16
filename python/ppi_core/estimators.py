@@ -14,19 +14,44 @@ of the trace of the sandwich covariance, mirroring the reference).
 objective and never does worse than the better endpoint.
 
 Pool mode (``pool_size=M``): the experiment runner labels a subset of a
-single finite pool of M records and uses the remainder as the unlabeled
-sample, whereas the two-sample PPI formulas assume labeled and unlabeled
-samples drawn independently from the superpopulation.  Estimating a
-superpopulation parameter from one pool adds a finite-pool variance
-component: at the pool level the lam-terms telescope (lam*fbar from the
-unlabeled part cancels -lam*fbar from the rectifier), leaving the plain
-unit-level score — y - theta for the mean, x(x'theta - y) for OLS,
-x(sigma - y) for logistic, 1{y<=t} - F for the CDF — whose population
-(co)variance divided by M is added to the reported variance.  Without it
-the full-loop coverage simulation measured 0.9275 against nominal 0.95
-(docs/gauntlet/statistical-core.md); with it, coverage clears the gate.
+single finite pool of M records, whereas the two-sample PPI formulas
+assume labeled and unlabeled samples drawn independently from the
+superpopulation.  In pool mode the caller passes the predictions of the
+**entire pool** (all M records, labeled ones included) as ``f_unl`` /
+``x_unl``, and the estimator uses that full-pool statistic as its
+baseline.  Two consequences, both critical:
+
+1. The baseline is a *fixed function of the pool* — active selection
+   cannot tilt it.  (Review round 1 of this workstream proved that using
+   the pool *complement* as the unlabeled sample biases the baseline
+   whenever selection correlates with predictions: measured coverage
+   0.133 at nominal 0.95 under quadratic uncertainty with budget/pool =
+   0.45.  The full-pool baseline eliminates that failure mode by
+   construction, not by simulation luck.)
+2. The variance decomposes by conditioning on the pool (law of total
+   variance, no cross term): the selection component is the weighted
+   variance of the labeled rectifier alone (the baseline is constant
+   given the pool, so the two-sample ``f_unl`` variance term drops), and
+   the pool-draw component is the population (co)variance of the plain
+   unit-level score — y for the mean, x(x'theta-y) for OLS, x(sigma-y)
+   for logistic, 1{y<=t}-F for the CDF — divided by M.  The lam-terms
+   cancel *inside the conditional expectation* (mean over the pool of
+   the baseline's lam*f exactly offsets the rectifier's -lam*f), which
+   is an identity over all M records, not an assumption about selection.
+
 ``pool_size=None`` (the default) is the pure two-sample setting and
 matches the golden reference exactly.
+
+Weighted CIs use Student-t critical values with the Satterthwaite-style
+effective degrees of freedom (sum w_hat^2)^2 / sum w_hat^4 - 1, which
+equals n-1 under uniform weights and shrinks properly under skew; the
+effective sample size n_eff = 1/sum(w_hat^2) is emitted in every
+weighted result as the caller-facing diagnostic (dashboards should warn
+when it is small).  With skewed IPW weights a z interval undercovers
+well before n looks small (measured 0.9187 at the extreme-tilt gate
+scenario; the Satterthwaite t brings it to 0.9375).  Unweighted
+two-sample results keep z, preserving the reference contract; the
+asymmetry is deliberate and documented here.
 """
 
 from __future__ import annotations
@@ -54,15 +79,41 @@ def _z(alpha: float) -> float:
     return float(stats.norm.ppf(1.0 - alpha / 2.0))
 
 
-def _scalar_result(estimate, se, alpha, estimand, method, n, big_n=None, lam=None):
-    z = _z(alpha)
+def _n_eff(w_hat: np.ndarray) -> float:
+    """Effective sample size under normalized weights: 1 / sum(w_hat^2)."""
+    return float(1.0 / (w_hat @ w_hat))
+
+
+def _weighted_df(w_hat: np.ndarray) -> float:
+    """Satterthwaite-style effective degrees of freedom for the weighted
+    variance estimate: (sum w^2)^2 / sum w^4 - 1.  Equals n-1 under
+    uniform weights; shrinks below n_eff-1 under skew, which is what the
+    extreme-tilt gate scenario needs (t(n_eff-1) measured 0.9187 there,
+    t(satterthwaite) 0.9375 — review round 1, MAJOR-5)."""
+    s2 = float(w_hat @ w_hat)
+    s4 = float((w_hat**2) @ (w_hat**2))
+    return max(s2 * s2 / s4 - 1.0, 1.0)
+
+
+def _crit(alpha: float, df: float | None) -> float:
+    """Critical value: z unweighted (reference contract); t(df) for
+    weighted results with the Satterthwaite df above."""
+    if df is None:
+        return _z(alpha)
+    return float(stats.t.ppf(1.0 - alpha / 2.0, max(df, 1.0)))
+
+
+def _scalar_result(
+    estimate, se, alpha, estimand, method, n, big_n=None, lam=None, n_eff=None, df=None
+):
+    c = _crit(alpha, df)
     out = {
         "estimand": estimand,
         "method": method,
         "estimate": float(estimate),
         "se": float(se),
-        "ci_lower": float(estimate - z * se),
-        "ci_upper": float(estimate + z * se),
+        "ci_lower": float(estimate - c * se),
+        "ci_upper": float(estimate + c * se),
         "alpha": float(alpha),
         "n": int(n),
     }
@@ -70,19 +121,23 @@ def _scalar_result(estimate, se, alpha, estimand, method, n, big_n=None, lam=Non
         out["N"] = int(big_n)
     if lam is not None:
         out["lam"] = float(lam)
+    if n_eff is not None:
+        out["n_eff"] = round(float(n_eff), 2)
     return out
 
 
-def _vector_result(theta, cov, alpha, estimand, method, n, big_n=None, lam=None):
-    z = _z(alpha)
+def _vector_result(
+    theta, cov, alpha, estimand, method, n, big_n=None, lam=None, n_eff=None, df=None
+):
+    c = _crit(alpha, df)
     se = np.sqrt(np.diag(cov))
     out = {
         "estimand": estimand,
         "method": method,
         "estimate": [float(v) for v in theta],
         "se": [float(v) for v in se],
-        "ci_lower": [float(v) for v in theta - z * se],
-        "ci_upper": [float(v) for v in theta + z * se],
+        "ci_lower": [float(v) for v in theta - c * se],
+        "ci_upper": [float(v) for v in theta + c * se],
         "alpha": float(alpha),
         "n": int(n),
     }
@@ -90,6 +145,8 @@ def _vector_result(theta, cov, alpha, estimand, method, n, big_n=None, lam=None)
         out["N"] = int(big_n)
     if lam is not None:
         out["lam"] = float(lam)
+    if n_eff is not None:
+        out["n_eff"] = round(float(n_eff), 2)
     return out
 
 
@@ -105,46 +162,75 @@ def _pool_var_term(y_lab, w_hat, pool_size):
     return weighted_population_variance(y_lab, w_hat) / pool_size
 
 
+def _check_pool_args(pool_size, unl_len):
+    """Pool mode requires the full-pool arrays as the baseline sample."""
+    if pool_size is not None and unl_len != pool_size:
+        raise ValueError(
+            f"pool mode: f_unl/x_unl must be the FULL pool ({pool_size} records), got {unl_len}"
+        )
+
+
 def mean_classical(y, w=None, alpha=DEFAULT_ALPHA, pool_size=None):
-    """(Weighted) sample mean with normal-approximation CI."""
+    """(Weighted) sample mean with normal/t-approximation CI."""
     y = np.asarray(y, dtype=float)
     w_hat = normalize_weights(w, y.size)
     est = weighted_mean(y, w_hat)
     var = weighted_mean_variance(y, w_hat) + _pool_var_term(y, w_hat, pool_size)
-    return _scalar_result(est, np.sqrt(var), alpha, "mean", "classical", y.size)
+    n_eff = _n_eff(w_hat) if w is not None else None
+    df = _weighted_df(w_hat) if w is not None else None
+    return _scalar_result(est, np.sqrt(var), alpha, "mean", "classical", y.size, n_eff=n_eff, df=df)
 
 
 def _mean_ppi_parts(y_lab, f_lab, f_unl, w_hat, lam, pool_size=None):
     est = lam * f_unl.mean() + weighted_mean(y_lab - lam * f_lab, w_hat)
-    var_unl = f_unl.var(ddof=1) / f_unl.size
     var_lab = weighted_mean_variance(y_lab - lam * f_lab, w_hat)
-    var = (lam**2) * var_unl + var_lab + _pool_var_term(y_lab, w_hat, pool_size)
+    if pool_size is None:
+        # Two-sample: the unlabeled sample mean carries its own variance.
+        var = (lam**2) * f_unl.var(ddof=1) / f_unl.size + var_lab
+    else:
+        # Pool mode: baseline is the full-pool prediction mean — fixed
+        # given the pool, zero selection variance.  Pool-draw component
+        # is the population var of the unit score y over M (module doc).
+        var = var_lab + _pool_var_term(y_lab, w_hat, pool_size)
     return est, var
 
 
 def mean_ppi(y_lab, f_lab, f_unl, w=None, lam=1.0, alpha=DEFAULT_ALPHA, pool_size=None):
-    """Rectified (PPI) mean with fixed tuning parameter ``lam``."""
+    """Rectified (PPI) mean with fixed tuning parameter ``lam``.
+
+    Pool mode: ``f_unl`` must be the predictions of the ENTIRE pool
+    (all pool_size records, labeled included) — see module docstring.
+    """
     y_lab = np.asarray(y_lab, dtype=float)
     f_lab = np.asarray(f_lab, dtype=float)
     f_unl = np.asarray(f_unl, dtype=float)
+    _check_pool_args(pool_size, f_unl.size)
     w_hat = normalize_weights(w, y_lab.size)
     est, var = _mean_ppi_parts(y_lab, f_lab, f_unl, w_hat, lam, pool_size)
-    return _scalar_result(est, np.sqrt(var), alpha, "mean", "ppi", y_lab.size, f_unl.size, lam)
+    n_eff = _n_eff(w_hat) if w is not None else None
+    df = _weighted_df(w_hat) if w is not None else None
+    return _scalar_result(
+        est, np.sqrt(var), alpha, "mean", "ppi", y_lab.size, f_unl.size, lam, n_eff=n_eff, df=df
+    )
 
 
-def mean_lam_star(y_lab, f_lab, f_unl, w=None) -> float:
+def mean_lam_star(y_lab, f_lab, f_unl, w=None, pool_size=None) -> float:
     """Exact minimizer (clipped to [0,1]) of the reported variance.
 
-    var(lam) = lam^2 * var(f_unl)/N + V_w(y - lam f)  is quadratic in lam
-    with minimizer  lam* = C_w(y, f) / (var(f_unl)/N + V_w(f)),
-    where V_w / C_w are the weighted variance/covariance of the labeled
-    weighted mean.
+    Two-sample: var(lam) = lam^2 var(f_unl)/N + V_w(y - lam f), minimized
+    at lam* = C_w(y, f) / (var(f_unl)/N + V_w(f)).
+
+    Pool mode: the baseline term is fixed given the pool, so
+    var(lam) = V_w(y - lam f) + const, minimized at
+    lam* = C_w(y, f) / V_w(f) — the pure regression-adjustment tuning.
     """
     y_lab = np.asarray(y_lab, dtype=float)
     f_lab = np.asarray(f_lab, dtype=float)
     f_unl = np.asarray(f_unl, dtype=float)
     w_hat = normalize_weights(w, y_lab.size)
-    denom = f_unl.var(ddof=1) / f_unl.size + weighted_mean_variance(f_lab, w_hat)
+    denom = weighted_mean_variance(f_lab, w_hat)
+    if pool_size is None:
+        denom += f_unl.var(ddof=1) / f_unl.size
     if denom <= 0.0:
         return 0.0
     lam = weighted_mean_cov(y_lab, f_lab, w_hat) / denom
@@ -152,13 +238,8 @@ def mean_lam_star(y_lab, f_lab, f_unl, w=None) -> float:
 
 
 def mean_ppi_power_tuned(y_lab, f_lab, f_unl, w=None, alpha=DEFAULT_ALPHA, pool_size=None):
-    """PPI++ mean at the variance-minimizing lambda.
-
-    The pool-mode term is lam-independent (pool-level scores telescope to
-    y), so it shifts the variance curve without moving its minimizer:
-    lam* is unchanged by pool_size.
-    """
-    lam = mean_lam_star(y_lab, f_lab, f_unl, w)
+    """PPI++ mean at the variance-minimizing lambda (mode-consistent)."""
+    lam = mean_lam_star(y_lab, f_lab, f_unl, w, pool_size=pool_size)
     out = mean_ppi(y_lab, f_lab, f_unl, w=w, lam=lam, alpha=alpha, pool_size=pool_size)
     out["method"] = "ppi_power_tuned"
     return out
@@ -174,8 +255,8 @@ def _ecdf_at(sorted_vals: np.ndarray, grid: np.ndarray) -> np.ndarray:
     return np.searchsorted(sorted_vals, grid, side="right") / sorted_vals.size
 
 
-def _quantile_result(grid, f_hat, var, p, alpha, estimand_extra, continuity=0.0):
-    z = _z(alpha)
+def _quantile_result(grid, f_hat, var, p, alpha, estimand_extra, continuity=0.0, df=None):
+    z = _crit(alpha, df)
     est = float(grid[int(np.argmin(np.abs(f_hat - p)))])
     keep = np.abs(f_hat - p) <= z * np.sqrt(var) + continuity
     lo = float(grid[keep].min()) if keep.any() else est
@@ -207,11 +288,12 @@ def quantile_classical(y, p, w=None, alpha=DEFAULT_ALPHA, pool_size=None):
     matches the golden reference exactly.  See the reference docstring
     for the review history (Wald band: 4.8% coverage at n=30, p=0.99).
 
-    Weighted: no exact finite-sample interval exists; uses the normal
-    band on the weighted ECDF with the *null* variance
+    Weighted: no exact finite-sample interval exists; uses the t-band
+    (df = n_eff - 1) on the weighted ECDF with the *null* variance
     p(1-p) * sum(w_hat^2).  Documented approximation — its coverage
-    under active selection is certified by the coverage simulation, not
-    by construction.
+    under active selection is measured by the gated ``runner_quantile``
+    scenario in ppi_core.simulate (a claim that was previously written
+    here before any such scenario existed; review round 1, MAJOR-3).
     """
     y = np.asarray(y, dtype=float)
     n = y.size
@@ -239,28 +321,40 @@ def quantile_classical(y, p, w=None, alpha=DEFAULT_ALPHA, pool_size=None):
     order = np.argsort(y, kind="stable")
     y_sorted = y[order]
     grid = np.unique(y_sorted)
+    n_eff = _n_eff(w_hat)
     var = p * (1.0 - p) * float(w_hat @ w_hat)
     if pool_size is not None:
         var = var + p * (1.0 - p) / pool_size  # pool-mode CDF term (module doc)
     cum_w = np.cumsum(w_hat[order])
     idx = np.searchsorted(y_sorted, grid, side="right") - 1
     f_hat = cum_w[idx]
-    return _quantile_result(grid, f_hat, var, p, alpha, {"method": "classical_weighted", "n": n})
+    return _quantile_result(
+        grid,
+        f_hat,
+        var,
+        p,
+        alpha,
+        {"method": "classical_weighted", "n": n, "n_eff": round(n_eff, 2)},
+        df=_weighted_df(w_hat),
+    )
 
 
 def quantile_ppi(y_lab, f_lab, f_unl, p, w=None, alpha=DEFAULT_ALPHA, pool_size=None):
-    """Rectified quantile via the rectified CDF (see reference docstring)."""
+    """Rectified quantile via the rectified CDF (see reference docstring).
+
+    Pool mode: ``f_unl`` is the full pool's predictions; the baseline
+    ECDF is then fixed given the pool (zero selection variance) and the
+    pool-draw CDF term F(1-F)/M is added instead.
+    """
     y_lab = np.asarray(y_lab, dtype=float)
     f_lab = np.asarray(f_lab, dtype=float)
     f_unl = np.asarray(f_unl, dtype=float)
     n, big_n = y_lab.size, f_unl.size
+    _check_pool_args(pool_size, big_n)
     w_hat = normalize_weights(w, n)
 
     grid = np.unique(np.concatenate([y_lab, f_lab, f_unl]))
     ecdf_unl = _ecdf_at(np.sort(f_unl), grid)
-    # Var of the unlabeled ECDF term: for an indicator with sample mean p,
-    # var(ddof=1)/N = p(1-p)/(N-1) exactly — matches the reference.
-    var_unl = ecdf_unl * (1.0 - ecdf_unl) / max(big_n - 1, 1)
 
     ind_d = (y_lab[:, None] <= grid[None, :]).astype(float) - (
         f_lab[:, None] <= grid[None, :]
@@ -270,14 +364,23 @@ def quantile_ppi(y_lab, f_lab, f_unl, p, w=None, alpha=DEFAULT_ALPHA, pool_size=
     var_lab = ((ind_d - rect[None, :]) ** 2).T @ (w_hat**2) / denom
 
     f_pp = ecdf_unl + rect
-    var = var_unl + var_lab
-    if pool_size is not None:
-        # Pool-mode CDF term: population var of 1{y<=t} is F(1-F); use the
-        # rectified F_PP clipped to [0,1] as its estimate (module doc).
+    if pool_size is None:
+        # Two-sample: the unlabeled ECDF carries its own variance; for an
+        # indicator with sample mean p, var(ddof=1)/N = p(1-p)/(N-1)
+        # exactly — matches the reference.
+        var = ecdf_unl * (1.0 - ecdf_unl) / max(big_n - 1, 1) + var_lab
+    else:
+        # Pool mode: baseline ECDF fixed given the pool; add the
+        # pool-draw CDF term with F_PP (clipped) as the plug-in.
         f_clip = np.clip(f_pp, 0.0, 1.0)
-        var = var + f_clip * (1.0 - f_clip) / pool_size
+        var = var_lab + f_clip * (1.0 - f_clip) / pool_size
 
-    return _quantile_result(grid, f_pp, var, p, alpha, {"method": "ppi", "n": n, "N": big_n})
+    n_eff = _n_eff(w_hat) if w is not None else None
+    extra = {"method": "ppi", "n": n, "N": big_n}
+    if n_eff is not None:
+        extra["n_eff"] = round(n_eff, 2)
+    df = _weighted_df(w_hat) if w is not None else None
+    return _quantile_result(grid, f_pp, var, p, alpha, extra, df=df)
 
 
 # ---------------------------------------------------------------------------
@@ -305,7 +408,9 @@ def ols_classical(x, y, w=None, alpha=DEFAULT_ALPHA, pool_size=None):
     v = weighted_gradient_cov(grads, w_hat) + _pool_cov_term(grads, w_hat, pool_size)
     h_inv = np.linalg.inv(h)
     cov = h_inv @ v @ h_inv
-    return _vector_result(theta, cov, alpha, "ols", "classical", n)
+    n_eff = _n_eff(w_hat) if w is not None else None
+    df = _weighted_df(w_hat) if w is not None else None
+    return _vector_result(theta, cov, alpha, "ols", "classical", n, n_eff=n_eff, df=df)
 
 
 def _ols_ppi_solve(x_lab, y_lab, f_lab, x_unl, f_unl, w_hat, lam):
@@ -319,11 +424,16 @@ def _ols_ppi_solve(x_lab, y_lab, f_lab, x_unl, f_unl, w_hat, lam):
 
 
 def _ols_ppi_cov(x_lab, y_lab, f_lab, x_unl, f_unl, w_hat, theta, h, lam, pool_size=None):
-    a = x_unl * (x_unl @ theta - f_unl)[:, None]
     bc = x_lab * ((x_lab @ theta - y_lab) - lam * (x_lab @ theta - f_lab))[:, None]
-    v = (lam**2) * mean_of_iid_cov(a) + weighted_gradient_cov(bc, w_hat)
-    if pool_size is not None:
-        # Pool-level unit score is x(x'theta - y): lam-terms telescope.
+    v = weighted_gradient_cov(bc, w_hat)
+    if pool_size is None:
+        # Two-sample: the unlabeled gradient term carries its own variance.
+        a = x_unl * (x_unl @ theta - f_unl)[:, None]
+        v = v + (lam**2) * mean_of_iid_cov(a)
+    else:
+        # Pool mode: the full-pool gradient term is fixed given the pool;
+        # add the pool-draw covariance of the unit score x(x'theta - y)
+        # (the lam-terms cancel identically over the pool — module doc).
         b = x_lab * (x_lab @ theta - y_lab)[:, None]
         v = v + _pool_cov_term(b, w_hat, pool_size)
     h_inv = np.linalg.inv(h)
@@ -333,17 +443,25 @@ def _ols_ppi_cov(x_lab, y_lab, f_lab, x_unl, f_unl, w_hat, theta, h, lam, pool_s
 def ols_ppi(
     x_lab, y_lab, f_lab, x_unl, f_unl, w=None, lam=1.0, alpha=DEFAULT_ALPHA, pool_size=None
 ):
-    """Rectified OLS with sandwich CIs and optional labeled-sample weights."""
+    """Rectified OLS with sandwich CIs and optional labeled-sample weights.
+
+    Pool mode: ``x_unl``/``f_unl`` must be the ENTIRE pool (module doc).
+    """
     x_lab = np.asarray(x_lab, dtype=float)
     y_lab = np.asarray(y_lab, dtype=float)
     f_lab = np.asarray(f_lab, dtype=float)
     x_unl = np.asarray(x_unl, dtype=float)
     f_unl = np.asarray(f_unl, dtype=float)
+    _check_pool_args(pool_size, x_unl.shape[0])
     n = x_lab.shape[0]
     w_hat = normalize_weights(w, n)
     theta, h = _ols_ppi_solve(x_lab, y_lab, f_lab, x_unl, f_unl, w_hat, lam)
     cov = _ols_ppi_cov(x_lab, y_lab, f_lab, x_unl, f_unl, w_hat, theta, h, lam, pool_size)
-    return _vector_result(theta, cov, alpha, "ols", "ppi", n, x_unl.shape[0], lam)
+    n_eff = _n_eff(w_hat) if w is not None else None
+    df = _weighted_df(w_hat) if w is not None else None
+    return _vector_result(
+        theta, cov, alpha, "ols", "ppi", n, x_unl.shape[0], lam, n_eff=n_eff, df=df
+    )
 
 
 def ols_ppi_power_tuned(
@@ -373,7 +491,9 @@ def ols_ppi_power_tuned(
     best = (float("inf"), 1.0)
     for lam in np.linspace(0.0, 1.0, grid_size):
         theta, h = _ols_ppi_solve(x_lab, y_lab, f_lab, x_unl, f_unl, w_hat, lam)
-        cov = _ols_ppi_cov(x_lab, y_lab, f_lab, x_unl, f_unl, w_hat, theta, h, lam)
+        # Minimize the same variance the chosen mode reports (in pool mode
+        # the two-sample a-term is absent, which changes the objective).
+        cov = _ols_ppi_cov(x_lab, y_lab, f_lab, x_unl, f_unl, w_hat, theta, h, lam, pool_size)
         tr = float(np.trace(cov))
         if tr < best[0]:
             best = (tr, float(lam))
@@ -438,11 +558,15 @@ def _logistic_ppi_cov(x_lab, y_lab, f_lab, x_unl, f_unl, w_hat, theta, lam, pool
         lam * (x_unl * (su * (1 - su))[:, None]).T @ x_unl / big_n
         + (1.0 - lam) * (x_lab * (w_hat * sl * (1 - sl))[:, None]).T @ x_lab
     )
-    a = x_unl * (su - f_unl)[:, None]
     bc = x_lab * ((sl - y_lab) - lam * (sl - f_lab))[:, None]
-    v = (lam**2) * mean_of_iid_cov(a) + weighted_gradient_cov(bc, w_hat)
-    if pool_size is not None:
-        # Pool-level unit score is x(sigma - y): lam-terms telescope.
+    v = weighted_gradient_cov(bc, w_hat)
+    if pool_size is None:
+        # Two-sample: the unlabeled score term carries its own variance.
+        a = x_unl * (su - f_unl)[:, None]
+        v = v + (lam**2) * mean_of_iid_cov(a)
+    else:
+        # Pool mode: full-pool score term fixed given the pool; add the
+        # pool-draw covariance of the unit score x(sigma - y).
         b = x_lab * (sl - y_lab)[:, None]
         v = v + _pool_cov_term(b, w_hat, pool_size)
     h_inv = np.linalg.inv(h)
@@ -456,22 +580,43 @@ def logistic_classical(x, y, w=None, alpha=DEFAULT_ALPHA, pool_size=None):
     w_hat = normalize_weights(w, x.shape[0])
     theta = _logistic_solve(x, y, y, x, y, w_hat, 0.0)
     cov = _logistic_ppi_cov(x, y, y, x, y, w_hat, theta, 0.0, pool_size)
-    return _vector_result(theta, cov, alpha, "logistic", "classical", x.shape[0])
+    n_eff = _n_eff(w_hat) if w is not None else None
+    df = _weighted_df(w_hat) if w is not None else None
+    return _vector_result(
+        theta, cov, alpha, "logistic", "classical", x.shape[0], n_eff=n_eff, df=df
+    )
 
 
 def logistic_ppi(
     x_lab, y_lab, f_lab, x_unl, f_unl, w=None, lam=1.0, alpha=DEFAULT_ALPHA, pool_size=None
 ):
-    """Rectified logistic coefficients (f = predicted probabilities)."""
+    """Rectified logistic coefficients (f = predicted probabilities).
+
+    Pool mode: ``x_unl``/``f_unl`` must be the ENTIRE pool (module doc).
+    """
     x_lab = np.asarray(x_lab, dtype=float)
     y_lab = np.asarray(y_lab, dtype=float)
     f_lab = np.asarray(f_lab, dtype=float)
     x_unl = np.asarray(x_unl, dtype=float)
     f_unl = np.asarray(f_unl, dtype=float)
+    _check_pool_args(pool_size, x_unl.shape[0])
     w_hat = normalize_weights(w, x_lab.shape[0])
     theta = _logistic_solve(x_lab, y_lab, f_lab, x_unl, f_unl, w_hat, lam)
     cov = _logistic_ppi_cov(x_lab, y_lab, f_lab, x_unl, f_unl, w_hat, theta, lam, pool_size)
-    return _vector_result(theta, cov, alpha, "logistic", "ppi", x_lab.shape[0], x_unl.shape[0], lam)
+    n_eff = _n_eff(w_hat) if w is not None else None
+    df = _weighted_df(w_hat) if w is not None else None
+    return _vector_result(
+        theta,
+        cov,
+        alpha,
+        "logistic",
+        "ppi",
+        x_lab.shape[0],
+        x_unl.shape[0],
+        lam,
+        n_eff=n_eff,
+        df=df,
+    )
 
 
 def logistic_ppi_power_tuned(
@@ -487,9 +632,8 @@ def logistic_ppi_power_tuned(
 ):
     """PPI++ logistic: lambda on a [0,1] grid minimizing tr(sandwich cov).
 
-    Lambda selection uses the two-sample covariance (the pool term is
-    lam-independent); the reported CI includes the pool term when
-    pool_size is given.
+    The minimized objective is the same variance the chosen mode reports
+    (pool mode drops the two-sample score term, changing the objective).
     """
     x_lab = np.asarray(x_lab, dtype=float)
     y_lab = np.asarray(y_lab, dtype=float)
@@ -501,7 +645,7 @@ def logistic_ppi_power_tuned(
     best = (float("inf"), 1.0)
     for lam in np.linspace(0.0, 1.0, grid_size):
         theta = _logistic_solve(x_lab, y_lab, f_lab, x_unl, f_unl, w_hat, lam)
-        cov = _logistic_ppi_cov(x_lab, y_lab, f_lab, x_unl, f_unl, w_hat, theta, lam)
+        cov = _logistic_ppi_cov(x_lab, y_lab, f_lab, x_unl, f_unl, w_hat, theta, lam, pool_size)
         tr = float(np.trace(cov))
         if tr < best[0]:
             best = (tr, float(lam))

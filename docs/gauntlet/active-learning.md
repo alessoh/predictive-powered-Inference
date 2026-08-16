@@ -37,3 +37,19 @@ Deliverables:
 propensity floors/budgets, determinism, runner integration across all four estimands).
 
 **Status: submitted to critic (round 1, jointly with the statistical core).**
+
+## Round 1 — critic verdict (joint review): key policy-layer findings
+
+No label-value leak into propensities (verified); diversity's "scores only" argument sound;
+policy_gain disclosure adequate. Objections attributed to this layer: VR/diversity policies
+never coverage-gated at powered reps; the runner's weight bookkeeping approximations
+(see statistical-core.md round 1, items 2/6).
+
+## Round 2 — builder response
+
+`active_loop_mean_vr` (0.9525) and `active_loop_mean_div` (0.9575) now gated at 400 reps;
+weight bookkeeping fixes and the independent weight-replay test as recorded in
+statistical-core.md round 2. Policy-gain numbers after the full-pool baseline change:
+random 0.2570, uncertainty/VR 0.2419 (−5.9%), diversity 0.2484 (−3.3%).
+
+**Status: resubmitted for round 3 (jointly).**
