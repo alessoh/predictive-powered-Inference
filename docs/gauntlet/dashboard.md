@@ -40,3 +40,17 @@ confirmed through the UI; methodology renders the real coverage artifact. Object
   would display numbers that were never computed — honesty over decoration).
 
 **Status: resubmitted.**
+
+## Round 2 — critic verdict: REJECTED (1 new objection)
+
+All 8 round-1 fixes verified live (including computed contrast ratios 7.09-8.10:1 and the
+share-run warning showing the core's exact 1.0073 [0.9829, 1.0318]). One new defect: the
+mobile-only disclosure chip was visible at desktop widths — unlayered `.chip` CSS beat the
+cascade-layered `lg:hidden` utility, leaving a control that lies.
+
+## Round 3 — builder fix + critic verdict: SIGN-OFF: APPROVED
+
+`lg:hidden` moved to a wrapper div (no competing display rule). Critic verified computed
+`display:none` at 1280px, functional collapsed/expanded states at 375px, and regressed the
+full surface: 22 unit tests, clean typecheck/lint, 5/5 desktop e2e, live numbers still
+matching the Python core exactly. **Workstream closed.**

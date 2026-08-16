@@ -35,3 +35,11 @@ refuses ungrounded labels and doctored reports), then objected:
 - A6: orchestrator validates any supplied rubric and throws with the problem list (tested).
 
 22 Vitest tests green. **Status: resubmitted.**
+
+## Round 2 — critic verdict: SIGN-OFF: APPROVED
+
+"All 6 objections genuinely fixed" — the critic re-ran the 22-test suite including the
+three new injected-loader degradation tests (verified retry counts, degraded status,
+warnings, continuation, all-down failure), the between-batch token ceiling, enforced
+rubric validation, the honest verifier scope note, and the corrected feed docs against
+the implementation. **Workstream closed.**

@@ -36,3 +36,18 @@ Frame-time gate after the changes: **median 16.70ms, p95 16.90ms over 181 frames
 measurement cannot be faked by window stacking). Memory gate passes.
 
 **Status: resubmitted.**
+
+## Round 2 — critic verdict: REJECTED (2 new objections)
+
+All 6 round-1 fixes verified (DOM math on the 2D strip axis mapping checked out; dark-mode
+tokens confirmed live; frame gate independently re-run at median 16.70ms). Two new defects:
+the fallback SVG overflowed its container by ~209px, painting over adjacent content; and
+the two new elements re-introduced mixed precision inside one interval.
+
+## Round 3 — builder fixes + critic verdict: SIGN-OFF: APPROVED
+
+SVG constrained (flex column, min-h-0 grow, preserveAspectRatio, overflow-hidden);
+`fmtInterval` reused in the slab overlay and strip. Critic verified by DOM geometry (no
+overflow at 1280px: svg bottom 663.0 <= container 682.5; at 375px: 938.8 <= 958.3; legend
+and caption inside the panel), one precision per readout matching the stat tile, and
+regressed the disposal/memory gate. **Workstream closed.**
