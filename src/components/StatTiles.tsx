@@ -1,0 +1,100 @@
+"use client";
+
+/**
+ * Stat tiles (docs/03-design.md chart 4): hero estimate, spend/budget,
+ * n_eff with a warning state below 30, oracle identity. Every value is
+ * an echo of the Python core's output; nothing is recomputed here.
+ */
+
+import type { RoundRecord, RunState } from "@/lib/run-state";
+
+function Tile({
+  label,
+  children,
+  warn,
+}: {
+  label: string;
+  children: React.ReactNode;
+  warn?: string;
+}) {
+  return (
+    <div className="panel flex-1 px-4 py-3" role="group" aria-label={label}>
+      <div className="text-[12px]" style={{ color: "var(--ink-3)" }}>
+        {label}
+      </div>
+      <div className="num text-[24px] leading-tight md:text-[28px]">{children}</div>
+      {warn ? (
+        <div className="mt-1 text-[12px]" style={{ color: "var(--status-warn)" }} role="status">
+          ⚠ {warn}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export function StatTiles({
+  state,
+  unit,
+  oracle,
+  mode,
+}: {
+  state: RunState | null;
+  unit: string;
+  oracle: string;
+  mode: string;
+}) {
+  const last: RoundRecord | undefined = state?.history[state.history.length - 1];
+  const ppi = last?.estimates.ppi;
+  const fmt = (v: number) => (Math.abs(v) >= 100 ? v.toFixed(1) : v.toFixed(3));
+
+  return (
+    <div
+      className="flex flex-col gap-3 sm:flex-row"
+      aria-live="polite"
+      aria-label="Current run status"
+    >
+      <Tile label={`PPI estimate (${unit}) · superpopulation target`}>
+        {ppi ? (
+          <>
+            {fmt(ppi.estimate)}{" "}
+            <span className="text-[14px]" style={{ color: "var(--ink-2)" }}>
+              [{fmt(ppi.ci_lower)}, {fmt(ppi.ci_upper)}]
+            </span>
+          </>
+        ) : (
+          "—"
+        )}
+      </Tile>
+      <Tile label="Labels spent / budget">
+        {state ? (
+          <>
+            {state.spent}
+            <span className="text-[14px]" style={{ color: "var(--ink-2)" }}>
+              {" "}
+              / {state.config.label_budget}
+            </span>
+          </>
+        ) : (
+          "—"
+        )}
+      </Tile>
+      <Tile
+        label="Effective sample size (n_eff)"
+        warn={
+          ppi?.n_eff !== undefined && ppi.n_eff < 30
+            ? "n_eff below 30: weighted interval is running on few effective observations"
+            : undefined
+        }
+      >
+        {ppi?.n_eff !== undefined ? ppi.n_eff.toFixed(1) : "—"}
+      </Tile>
+      <Tile label="Oracle · mode · seed">
+        <span className="text-[16px]">{oracle || "—"}</span>
+        <div className="text-[12px]" style={{ color: "var(--ink-2)" }}>
+          <span className="chip mr-1">{mode}</span>
+          seed {state?.config.seed ?? "—"}
+        </div>
+      </Tile>
+    </div>
+  );
+}

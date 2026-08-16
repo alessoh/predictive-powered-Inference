@@ -53,3 +53,9 @@ statistical-core.md round 2. Policy-gain numbers after the full-pool baseline ch
 random 0.2570, uncertainty/VR 0.2419 (−5.9%), diversity 0.2484 (−3.3%).
 
 **Status: resubmitted for round 3 (jointly).**
+
+## Round 3 — critic verdict: SIGN-OFF: APPROVED (joint)
+
+See statistical-core.md round 3. Policy-layer-specific verification: no label-value leak
+re-confirmed; VR/diversity 400-rep gated rows pass; the plug-in weight scheme survived the
+critic's strongest purpose-built adaptive designs. **Workstream closed.**

@@ -289,7 +289,7 @@ def quantile_classical(y, p, w=None, alpha=DEFAULT_ALPHA, pool_size=None):
     for the review history (Wald band: 4.8% coverage at n=30, p=0.99).
 
     Weighted: no exact finite-sample interval exists; uses the t-band
-    (df = n_eff - 1) on the weighted ECDF with the *null* variance
+    (Satterthwaite df) on the weighted ECDF with the *null* variance
     p(1-p) * sum(w_hat^2).  Documented approximation — its coverage
     under active selection is measured by the gated ``runner_quantile``
     scenario in ppi_core.simulate (a claim that was previously written

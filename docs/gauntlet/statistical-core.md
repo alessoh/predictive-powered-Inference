@@ -108,3 +108,23 @@ docs/01-architecture.md.
 Full gate: **PASS, zero failures, 42 gated/reported rows, ~4.5 min** (seed 20260816).
 
 **Status: resubmitted for round 3.**
+
+## Round 3 — critic verdict: SIGN-OFF: APPROVED
+
+The critic re-verified everything itself (commit 5af2565): 87 tests, gate exit 0 with all
+new rows matching claimed values; re-derived the full-pool-baseline identity ("an algebraic
+identity over all M records, not a Cov(π,f)=0 assumption") and the law-of-total-variance
+decomposition; re-ran its round-1 killer probe (0.133 → 0.9433, bias −0.296 → −0.012) and
+built NEW adversarial designs (20-round adaptivity with informative heteroskedastic u,
+uncertified eps=0.02, clip-heavy cubic-u, heavy tails) — all covered at or above
+nominal-minus-gate; judged the pool-mean bootstrap framing honest ("naming the target fixes
+exactly what was wrong"); verified the Satterthwaite fix effective (skew regimes
+0.923–0.939 → 0.937–0.961) and all six MINOR fixes including the 1e-12 weight-replay test.
+
+Residual advisories, both addressed post-sign-off:
+1. Three stale "t(df = n_eff − 1)" doc strings aligned to Satterthwaite wording.
+2. `runner_logistic` scenario added and gated (worst-coordinate 0.945 at 200 reps, ~25 s).
+3. (Carried to the dashboard workstream): the UI must render the bootstrap's
+   `target: "pool_mean"` label — recorded as a requirement in docs/03-design.md.
+
+**Workstream closed.**

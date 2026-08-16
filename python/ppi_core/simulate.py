@@ -58,6 +58,7 @@ def _rng(scenario: str, seed: int) -> np.random.Generator:
         "runner_quantile": 22,
         "runner_ols": 23,
         "runner_bootstrap": 24,
+        "runner_logistic": 25,
     }
     return np.random.Generator(
         np.random.PCG64(np.random.SeedSequence(seed, spawn_key=(4, known[scenario])))
@@ -313,7 +314,7 @@ def sim_weight_skew_mean(seed: int = MASTER_SEED, reps: int = 800, pool: int = 2
     """Single-round IPW under an aggressively informative exponential
     tilt through the production selection_probabilities — the regime
     where review round 1 measured classical z-coverage 0.923.  Weighted
-    CIs now use t(df = n_eff - 1); this row keeps that fix honest.
+    CIs now use t with the Satterthwaite df; this row keeps that fix honest.
     """
     from ppi_core.policies import selection_probabilities
 
@@ -389,6 +390,38 @@ def sim_runner_ols(seed: int = MASTER_SEED, reps: int = 200, pool: int = 1200) -
             "policy": "variance_reduction",
             "batch_size": 60,
             "label_budget": 240,
+            "seed": int(rng.integers(0, 2**31)),
+            "n_boot": 0,
+        }
+        state = runner.init_state(cfg, {"f_pool": f, "u_pool": u, "x_pool": x, "y_pool": y})
+        final = runner.run_to_completion(state)
+        last = final["history"][-1]["estimates"]
+        for k in hits:
+            o = last[k]
+            for j, c in enumerate(_covers_vec(o, theta)):
+                hits[k][j] += c
+            widths[k].append(float(np.mean(np.asarray(o["ci_upper"]) - np.asarray(o["ci_lower"]))))
+    return _summary_vec(hits, widths, reps)
+
+
+def sim_runner_logistic(seed: int = MASTER_SEED, reps: int = 200, pool: int = 1500) -> dict:
+    """Full-loop logistic with asymmetric uncertainty; worst-coordinate
+    gated (closes the last runner path without a coverage row)."""
+    rng = _rng("runner_logistic", seed)
+    theta = np.array([0.8, -1.0])
+    hits = {k: [0, 0] for k in ("classical", "ppi")}
+    widths: dict = {k: [] for k in hits}
+    for _ in range(reps):
+        x = rng.normal(0.0, 1.0, (pool, 2))
+        p = 1.0 / (1.0 + np.exp(-(x @ theta)))
+        y = (rng.uniform(size=pool) < p).astype(float)
+        f = np.clip(p + rng.normal(0.0, 0.05, pool), 0.001, 0.999)
+        u = 0.05 + 0.5 * f  # asymmetric: rises with predicted probability
+        cfg = {
+            "estimand": "logistic",
+            "policy": "variance_reduction",
+            "batch_size": 100,
+            "label_budget": 400,
             "seed": int(rng.integers(0, 2**31)),
             "n_boot": 0,
         }
@@ -521,6 +554,7 @@ def run_all(seed: int = MASTER_SEED, fast: bool = False, div: int | None = None)
             "weight_skew_mean": sim_weight_skew_mean(seed, reps=800 // div),
             "runner_quantile": sim_runner_quantile(seed, reps=200 // div),
             "runner_ols": sim_runner_ols(seed, reps=200 // div),
+            "runner_logistic": sim_runner_logistic(seed, reps=200 // div),
             "runner_bootstrap": sim_runner_bootstrap(seed, reps=300 // div),
             "policy_gain": sim_policy_gain(seed, reps=60 // div),
         },

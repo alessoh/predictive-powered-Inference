@@ -31,7 +31,7 @@ def test_uniform_weights_equal_none():
     # Point estimate and SE agree (up to the last ulp of normalization).
     for key in ("estimate", "se"):
         assert a[key] == pytest.approx(b[key], abs=1e-12), key
-    # CIs deliberately differ: weighted results use t(df = n_eff - 1)
+    # CIs deliberately differ: weighted results use t with Satterthwaite df
     # (module docstring); with uniform weights n_eff = n, so the weighted
     # CI is the t-version of the unweighted z-CI.
     from scipy import stats
