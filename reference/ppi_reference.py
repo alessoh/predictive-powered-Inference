@@ -20,7 +20,9 @@ Angelopoulos, Bates, Fannjiang, Jordan, Zrnic (2023),
     theta_PP = mean(f_unl) + mean(y_lab - f_lab)                    (PPI)
 
 Angelopoulos, Duchi, Zrnic (2023), "PPI++: Efficient Prediction-Powered
-Inference".  The power-tuned estimator introduces lambda in [0, 1]:
+Inference".  The power-tuned estimator introduces a tuning parameter
+lambda (unconstrained in PPI++; clipped to [0, 1] here — a deliberate
+local deviation, see ``_lam_star_mean``):
 
     theta_lam = lam * mean(f_unl) + mean(y_lab - lam * f_lab)       (PPI++)
 
@@ -109,24 +111,37 @@ def mean_ppi(
 
 
 def _lam_star_mean(y_lab, f_lab, f_unl) -> float:
-    """Variance-minimizing lambda for the mean, clipped to [0, 1].
+    """Exact minimizer of the reported variance, clipped to [0, 1].
 
-    Minimizing lam^2 var(f)/N + var(y - lam f)/n over lam gives
+    The variance reported by ``mean_ppi`` is
 
-        lam* = cov(y, f) / (var(f) * (1 + n/N))
+        v(lam) = lam^2 * var(f_unl)/N + var(y - lam f)/n,
 
-    using the labeled sample for cov(y, f) and pooling both samples'
-    var(f) estimates is unnecessary at reference simplicity: we use the
-    labeled var(f) for the covariance ratio and rely on n/N for scaling.
+    a quadratic in lam whose exact minimizer is
+
+        lam* = (cov(y, f)/n) / (var(f_unl)/N + var(f_lab)/n).
+
+    Using the exact minimizer (rather than any approximation) makes the
+    endpoint-domination property v(lam*) <= min(v(0), v(1)) a theorem,
+    which the tests rely on.
+
+    Deviation from PPI++ noted: PPI++ does not constrain lambda to
+    [0, 1].  We clip because (a) it never does worse than the better
+    endpoint under the reported variance, and (b) the production engine
+    clips for logistic-objective convexity, and the reference must match
+    production semantics.  The efficiency cost when the unconstrained
+    lam* > 1 (predictions on a compressed scale) is accepted and
+    documented here.
     """
     y_lab = np.asarray(y_lab, dtype=float)
     f_lab = np.asarray(f_lab, dtype=float)
-    n, big_n = y_lab.size, np.asarray(f_unl).size
-    var_f = f_lab.var(ddof=1)
-    if var_f == 0.0:
+    f_unl = np.asarray(f_unl, dtype=float)
+    n, big_n = y_lab.size, f_unl.size
+    denom = f_unl.var(ddof=1) / big_n + f_lab.var(ddof=1) / n
+    if denom <= 0.0:
         return 0.0
     cov_yf = np.cov(y_lab, f_lab, ddof=1)[0, 1]
-    lam = cov_yf / (var_f * (1.0 + n / big_n))
+    lam = (cov_yf / n) / denom
     return float(np.clip(lam, 0.0, 1.0))
 
 
@@ -147,28 +162,41 @@ def mean_ppi_power_tuned(
 
 
 def quantile_classical(y: np.ndarray, p: float, alpha: float = 0.05) -> dict:
-    """Sample quantile with a CI from inverting the CDF's normal band.
+    """Sample quantile with the exact order-statistic CI.
 
-    For each candidate t, F_hat(t) = mean(1{y <= t}) has variance
-    F(1-F)/n; the CI is the set of t whose |F_hat(t) - p| lies within
-    z * sqrt(var).  This matches the PPI construction with f absent.
+    With K = #{Y_i < q_p} ~ Binomial(n, p) for continuous F, the interval
+    [Y_(l), Y_(u)] covers q_p iff l <= K <= u-1, so choosing
+
+        l = ppf_Binom(alpha/2; n, p)         (CDF(l-1) < alpha/2)
+        u = ppf_Binom(1 - alpha/2; n, p) + 1 (CDF(u-1) >= 1 - alpha/2)
+
+    guarantees coverage >= 1 - alpha for every n and p — including the
+    extremes where a normal band on the ECDF fails (review measured 4.8%
+    coverage at n=30, p=0.99 for the Wald band, and 92.3% at n=100,
+    p=0.95 even with the null variance, due to binomial skew).
+
+    Open endpoints: l = 0 means even Y_(1) may exceed q_p with
+    probability > alpha/2, so the interval is open below (extends past
+    the data); u = n+1 symmetrically above.  ``lower_open``/``upper_open``
+    flag this; the numeric endpoints stay at the data extremes.
     """
     y = np.sort(np.asarray(y, dtype=float))
     n = y.size
-    z = _z(alpha)
     est = float(np.quantile(y, p, method="inverted_cdf"))
 
-    grid = np.unique(y)
-    f_hat = np.searchsorted(y, grid, side="right") / n
-    var = f_hat * (1.0 - f_hat) / n
-    keep = np.abs(f_hat - p) <= z * np.sqrt(var)
-    lo = float(grid[keep].min()) if keep.any() else est
-    hi = float(grid[keep].max()) if keep.any() else est
+    lo_rank = int(stats.binom.ppf(alpha / 2.0, n, p))  # 0 => open below
+    hi_rank = int(stats.binom.ppf(1.0 - alpha / 2.0, n, p)) + 1  # n+1 => open above
+    lower_open = lo_rank < 1
+    upper_open = hi_rank > n
+    lo = float(y[max(lo_rank, 1) - 1])
+    hi = float(y[min(hi_rank, n) - 1])
     return {
         "estimate": est,
         "se": None,
         "ci_lower": lo,
         "ci_upper": hi,
+        "lower_open": lower_open,
+        "upper_open": upper_open,
         "alpha": float(alpha),
     }
 
@@ -190,6 +218,14 @@ def quantile_ppi(
 
     The estimate is the grid point minimizing |F_PP(t) - p|; the CI is
     the set of grid points within the normal band, as in the PPI paper.
+
+    Caveat (review-noted): both sample variances shrink toward zero at
+    the extreme ends of the merged grid, the same artifact fixed with a
+    null variance in ``quantile_classical``.  Here no single null
+    variance exists (the two-sample variance depends on both unknown
+    CDFs), so the ddof=1 plug-in is kept; the dense unlabeled sample
+    keeps interior grid points well-behaved, but intervals for p very
+    close to 0 or 1 with a small unlabeled sample should not be trusted.
     """
     y_lab = np.asarray(y_lab, dtype=float)
     f_lab = np.asarray(f_lab, dtype=float)
@@ -215,6 +251,8 @@ def quantile_ppi(
         "se": None,
         "ci_lower": lo,
         "ci_upper": hi,
+        "lower_open": bool(keep[0]),
+        "upper_open": bool(keep[-1]),
         "alpha": float(alpha),
     }
 
@@ -244,7 +282,9 @@ def ols_classical(x: np.ndarray, y: np.ndarray, alpha: float = 0.05) -> dict:
     theta = np.linalg.solve(x.T @ x, x.T @ y)
     resid = y - x @ theta
     h = x.T @ x / n
-    grads = x * resid[:, None]  # per-row gradient of squared loss / 2
+    # Per-row score x*(y - x'theta); the gradient of (1/2)(y - x'theta)^2
+    # is its negative — the sign cancels in the outer product below.
+    grads = x * resid[:, None]
     v = np.cov(grads.T, ddof=1) if x.shape[1] > 1 else np.atleast_2d(grads.var(ddof=1))
     h_inv = np.linalg.inv(h)
     cov = h_inv @ np.atleast_2d(v) @ h_inv / n
@@ -375,6 +415,15 @@ def _logistic_solve(x_lab, y_lab, f_lab, x_unl, f_unl, lam):
         method="BFGS",
         options={"gtol": 1e-10, "maxiter": 500},
     )
+    # BFGS at gtol=1e-10 often reports "precision loss" while holding an
+    # excellent iterate; judge convergence by the gradient itself.
+    if not res.success and float(np.max(np.abs(res.jac))) > 1e-6:
+        raise RuntimeError(f"logistic solver did not converge: {res.message}")
+    # Separation caveat: on perfectly separable data the unregularized
+    # MLE diverges; BFGS then stops at a large finite theta with a tiny
+    # gradient and the sandwich CI below is meaningless.  Detecting
+    # separation is out of scope for the reference; callers of the
+    # production engine get the same caveat in its documentation.
     return res.x
 
 

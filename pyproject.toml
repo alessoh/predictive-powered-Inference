@@ -1,0 +1,10 @@
+[tool.pytest.ini_options]
+pythonpath = ["python", "reference"]
+testpaths = ["reference", "python/tests", "api"]
+
+[tool.ruff]
+line-length = 100
+src = ["python", "reference", "api"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "NPY", "B"]

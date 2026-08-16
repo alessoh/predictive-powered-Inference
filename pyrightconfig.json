@@ -1,0 +1,6 @@
+{
+  "extraPaths": ["python", "reference"],
+  "venvPath": ".",
+  "venv": ".venv",
+  "exclude": ["node_modules", ".next", ".venv"]
+}
