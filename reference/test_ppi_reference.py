@@ -172,8 +172,8 @@ def _quantile_covers(out, truth):
 def test_quantile_classical_coverage_noncentral_p():
     """Coverage at p far from 1/2 — the exact regime where the Wald
     plug-in variance failed review (4.8% coverage at n=30, p=0.99).
-    With the null variance and half-open endpoints, coverage holds even
-    where the truth lies beyond the observed data range."""
+    With the exact order-statistic interval and half-open endpoints,
+    coverage holds even where the truth lies beyond the data range."""
     rng = np.random.default_rng(15)
     for n, p in ((30, 0.99), (100, 0.95), (200, 0.5)):
         truth = float(np.sqrt(2.0) * _norm_ppf(p))  # N(0, sqrt2) quantile
@@ -184,6 +184,31 @@ def test_quantile_classical_coverage_noncentral_p():
         )
         cov = hits / reps
         assert COVERAGE_BOUNDS[0] <= cov, f"n={n} p={p}: coverage {cov}"
+
+
+def test_quantile_open_flags_are_deterministic_in_n_p_alpha():
+    """Pin the open-endpoint flags themselves (review advisory: a mutant
+    that always sets both flags True would otherwise pass the suite).
+    upper_open at (n=30, p=0.99) iff ppf(0.975; 30, 0.99) + 1 > 30, which
+    binomial arithmetic makes True; both closed at (n=200, p=0.5)."""
+    rng = np.random.default_rng(23)
+    out_extreme = ref.quantile_classical(rng.normal(0.0, 1.0, 30), 0.99)
+    assert out_extreme["upper_open"] is True
+    assert out_extreme["lower_open"] is False
+    out_central = ref.quantile_classical(rng.normal(0.0, 1.0, 200), 0.5)
+    assert out_central["upper_open"] is False
+    assert out_central["lower_open"] is False
+
+
+def test_quantile_ppi_degenerate_band_is_signaled():
+    """At absurd p with a small unlabeled sample the band can exclude its
+    own estimate; the result must say so mechanically, not just in prose."""
+    rng = np.random.default_rng(24)
+    y_lab = rng.normal(0.0, 1.0, 40)
+    f_unl = rng.normal(0.0, 1.0, 50)
+    out = ref.quantile_ppi(y_lab, y_lab.copy(), f_unl, p=0.999)
+    inside = out["ci_lower"] <= out["estimate"] <= out["ci_upper"]
+    assert out["band_degenerate"] == (not inside)
 
 
 def test_quantile_classical_ci_contains_estimate_extreme_p():

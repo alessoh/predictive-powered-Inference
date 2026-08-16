@@ -161,6 +161,8 @@ def _quantile_result(grid, f_hat, var, p, alpha, estimand_extra, continuity=0.0)
         # band test the data cannot bound that side (see reference notes).
         "lower_open": bool(keep[0]),
         "upper_open": bool(keep[-1]),
+        # A band that excludes its own estimate must announce itself.
+        "band_degenerate": bool(not (lo <= est <= hi)),
         "alpha": float(alpha),
     }
     out.update(estimand_extra)

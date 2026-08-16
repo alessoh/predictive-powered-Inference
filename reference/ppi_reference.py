@@ -253,6 +253,9 @@ def quantile_ppi(
         "ci_upper": hi,
         "lower_open": bool(keep[0]),
         "upper_open": bool(keep[-1]),
+        # Mechanical signal for the extreme-p pathology in the docstring:
+        # a band that excludes its own estimate must announce itself.
+        "band_degenerate": bool(not (lo <= est <= hi)),
         "alpha": float(alpha),
     }
 

@@ -1,3 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ppi-core"
+version = "0.1.0"
+description = "Production prediction-powered inference engine (statistical core)"
+requires-python = ">=3.11"
+dependencies = ["numpy", "scipy"]
+
+[tool.setuptools]
+package-dir = { "" = "python" }
+packages = ["ppi_core"]
+
 [tool.pytest.ini_options]
 pythonpath = ["python", "reference"]
 testpaths = ["reference", "python/tests", "api"]

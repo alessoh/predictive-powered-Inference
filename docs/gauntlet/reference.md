@@ -52,6 +52,30 @@ logistic 0.940–0.945, quantile-PPI 0.983 at nominal 0.95). Objections:
 8. Comment fixed (score vs. gradient sign, cancellation noted).
 
 Quantile-PPI band variance kept (no null variance exists for the two-sample rectified CDF);
-caveat comment added per critique. Test count: 22 → 30, all passing.
+caveat comment added per critique. Test count: 22 → 29 after round 1 (31 after round-2
+advisories below), all passing.
 
-**Status: resubmitted for round 2.**
+## Round 2
+
+**Critic verdict: SIGN-OFF: APPROVED.** Justification given (as required for approval):
+re-derived the exact order-statistic interval from scratch and verified the rank choices are
+the *tightest* satisfying coverage ≥ 1−α by direct binomial computation across 40 (n, p)
+combinations; verified λ* is the exact minimizer against a 2001-point grid (deviation
+0.00e+00 over 50 draws) and re-ran the round-1 variance-shift stress (300/300 violations →
+0/300); measured coverage at the round-1 disaster cases (n=30, p=0.99: 0.048 → 0.998
+open-aware); confirmed the interval never excludes its own estimate (0 of 4800); judged the
+half-open semantics statistically honest ("at n=30, p=0.99 no data-bounded two-sided 95%
+interval exists; a one-sided bound is the only valid inference").
+
+Four non-blocking advisories, all addressed post-sign-off:
+
+1. Open-endpoint flags now pinned by `test_quantile_open_flags_are_deterministic_in_n_p_alpha`
+   (a mutant setting both flags True now fails the suite).
+2. `quantile_ppi` degenerate bands (estimate outside its own CI at absurd p with tiny
+   unlabeled samples) now carry a mechanical `band_degenerate` flag in both reference and
+   production, tested by `test_quantile_ppi_degenerate_band_is_signaled`.
+3. Stale "null variance" test docstring corrected to describe the exact interval.
+4. This log's test count corrected (29, not 30, at round-1 close).
+
+**Workstream closed. Final: 31 reference tests, 38 production-core tests, all passing;**
+**production matches reference at 1e-10 (1e-7 logistic).**
