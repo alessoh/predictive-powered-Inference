@@ -12,6 +12,21 @@ the reported variance expression; for OLS and logistic, a grid minimizer
 of the trace of the sandwich covariance, mirroring the reference).
 ``lam`` is clipped to [0, 1], which preserves convexity of the logistic
 objective and never does worse than the better endpoint.
+
+Pool mode (``pool_size=M``): the experiment runner labels a subset of a
+single finite pool of M records and uses the remainder as the unlabeled
+sample, whereas the two-sample PPI formulas assume labeled and unlabeled
+samples drawn independently from the superpopulation.  Estimating a
+superpopulation parameter from one pool adds a finite-pool variance
+component: at the pool level the lam-terms telescope (lam*fbar from the
+unlabeled part cancels -lam*fbar from the rectifier), leaving the plain
+unit-level score — y - theta for the mean, x(x'theta - y) for OLS,
+x(sigma - y) for logistic, 1{y<=t} - F for the CDF — whose population
+(co)variance divided by M is added to the reported variance.  Without it
+the full-loop coverage simulation measured 0.9275 against nominal 0.95
+(docs/gauntlet/statistical-core.md); with it, coverage clears the gate.
+``pool_size=None`` (the default) is the pure two-sample setting and
+matches the golden reference exactly.
 """
 
 from __future__ import annotations
@@ -26,6 +41,8 @@ from ppi_core._stats import (
     weighted_mean,
     weighted_mean_cov,
     weighted_mean_variance,
+    weighted_population_cov,
+    weighted_population_variance,
 )
 
 DEFAULT_ALPHA = 0.05
@@ -81,29 +98,37 @@ def _vector_result(theta, cov, alpha, estimand, method, n, big_n=None, lam=None)
 # ---------------------------------------------------------------------------
 
 
-def mean_classical(y, w=None, alpha=DEFAULT_ALPHA):
+def _pool_var_term(y_lab, w_hat, pool_size):
+    """Finite-pool superpopulation variance component (see module doc)."""
+    if pool_size is None:
+        return 0.0
+    return weighted_population_variance(y_lab, w_hat) / pool_size
+
+
+def mean_classical(y, w=None, alpha=DEFAULT_ALPHA, pool_size=None):
     """(Weighted) sample mean with normal-approximation CI."""
     y = np.asarray(y, dtype=float)
     w_hat = normalize_weights(w, y.size)
     est = weighted_mean(y, w_hat)
-    var = weighted_mean_variance(y, w_hat)
+    var = weighted_mean_variance(y, w_hat) + _pool_var_term(y, w_hat, pool_size)
     return _scalar_result(est, np.sqrt(var), alpha, "mean", "classical", y.size)
 
 
-def _mean_ppi_parts(y_lab, f_lab, f_unl, w_hat, lam):
+def _mean_ppi_parts(y_lab, f_lab, f_unl, w_hat, lam, pool_size=None):
     est = lam * f_unl.mean() + weighted_mean(y_lab - lam * f_lab, w_hat)
     var_unl = f_unl.var(ddof=1) / f_unl.size
     var_lab = weighted_mean_variance(y_lab - lam * f_lab, w_hat)
-    return est, (lam**2) * var_unl + var_lab
+    var = (lam**2) * var_unl + var_lab + _pool_var_term(y_lab, w_hat, pool_size)
+    return est, var
 
 
-def mean_ppi(y_lab, f_lab, f_unl, w=None, lam=1.0, alpha=DEFAULT_ALPHA):
+def mean_ppi(y_lab, f_lab, f_unl, w=None, lam=1.0, alpha=DEFAULT_ALPHA, pool_size=None):
     """Rectified (PPI) mean with fixed tuning parameter ``lam``."""
     y_lab = np.asarray(y_lab, dtype=float)
     f_lab = np.asarray(f_lab, dtype=float)
     f_unl = np.asarray(f_unl, dtype=float)
     w_hat = normalize_weights(w, y_lab.size)
-    est, var = _mean_ppi_parts(y_lab, f_lab, f_unl, w_hat, lam)
+    est, var = _mean_ppi_parts(y_lab, f_lab, f_unl, w_hat, lam, pool_size)
     return _scalar_result(est, np.sqrt(var), alpha, "mean", "ppi", y_lab.size, f_unl.size, lam)
 
 
@@ -126,10 +151,15 @@ def mean_lam_star(y_lab, f_lab, f_unl, w=None) -> float:
     return float(np.clip(lam, 0.0, 1.0))
 
 
-def mean_ppi_power_tuned(y_lab, f_lab, f_unl, w=None, alpha=DEFAULT_ALPHA):
-    """PPI++ mean at the variance-minimizing lambda."""
+def mean_ppi_power_tuned(y_lab, f_lab, f_unl, w=None, alpha=DEFAULT_ALPHA, pool_size=None):
+    """PPI++ mean at the variance-minimizing lambda.
+
+    The pool-mode term is lam-independent (pool-level scores telescope to
+    y), so it shifts the variance curve without moving its minimizer:
+    lam* is unchanged by pool_size.
+    """
     lam = mean_lam_star(y_lab, f_lab, f_unl, w)
-    out = mean_ppi(y_lab, f_lab, f_unl, w=w, lam=lam, alpha=alpha)
+    out = mean_ppi(y_lab, f_lab, f_unl, w=w, lam=lam, alpha=alpha, pool_size=pool_size)
     out["method"] = "ppi_power_tuned"
     return out
 
@@ -169,7 +199,7 @@ def _quantile_result(grid, f_hat, var, p, alpha, estimand_extra, continuity=0.0)
     return out
 
 
-def quantile_classical(y, p, w=None, alpha=DEFAULT_ALPHA):
+def quantile_classical(y, p, w=None, alpha=DEFAULT_ALPHA, pool_size=None):
     """(Weighted) sample quantile CI.
 
     Unweighted: the exact order-statistic (binomial rank inversion)
@@ -210,13 +240,15 @@ def quantile_classical(y, p, w=None, alpha=DEFAULT_ALPHA):
     y_sorted = y[order]
     grid = np.unique(y_sorted)
     var = p * (1.0 - p) * float(w_hat @ w_hat)
+    if pool_size is not None:
+        var = var + p * (1.0 - p) / pool_size  # pool-mode CDF term (module doc)
     cum_w = np.cumsum(w_hat[order])
     idx = np.searchsorted(y_sorted, grid, side="right") - 1
     f_hat = cum_w[idx]
     return _quantile_result(grid, f_hat, var, p, alpha, {"method": "classical_weighted", "n": n})
 
 
-def quantile_ppi(y_lab, f_lab, f_unl, p, w=None, alpha=DEFAULT_ALPHA):
+def quantile_ppi(y_lab, f_lab, f_unl, p, w=None, alpha=DEFAULT_ALPHA, pool_size=None):
     """Rectified quantile via the rectified CDF (see reference docstring)."""
     y_lab = np.asarray(y_lab, dtype=float)
     f_lab = np.asarray(f_lab, dtype=float)
@@ -239,6 +271,11 @@ def quantile_ppi(y_lab, f_lab, f_unl, p, w=None, alpha=DEFAULT_ALPHA):
 
     f_pp = ecdf_unl + rect
     var = var_unl + var_lab
+    if pool_size is not None:
+        # Pool-mode CDF term: population var of 1{y<=t} is F(1-F); use the
+        # rectified F_PP clipped to [0,1] as its estimate (module doc).
+        f_clip = np.clip(f_pp, 0.0, 1.0)
+        var = var + f_clip * (1.0 - f_clip) / pool_size
 
     return _quantile_result(grid, f_pp, var, p, alpha, {"method": "ppi", "n": n, "N": big_n})
 
@@ -248,7 +285,14 @@ def quantile_ppi(y_lab, f_lab, f_unl, p, w=None, alpha=DEFAULT_ALPHA):
 # ---------------------------------------------------------------------------
 
 
-def ols_classical(x, y, w=None, alpha=DEFAULT_ALPHA):
+def _pool_cov_term(scores, w_hat, pool_size):
+    """Finite-pool score-covariance component for sandwich estimators."""
+    if pool_size is None:
+        return 0.0
+    return weighted_population_cov(scores, w_hat) / pool_size
+
+
+def ols_classical(x, y, w=None, alpha=DEFAULT_ALPHA, pool_size=None):
     """(Weighted) OLS coefficients with sandwich CIs."""
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
@@ -258,7 +302,7 @@ def ols_classical(x, y, w=None, alpha=DEFAULT_ALPHA):
     h = xw.T @ x  # sum w_hat x x'
     theta = np.linalg.solve(h, xw.T @ y)
     grads = x * (y - x @ theta)[:, None]
-    v = weighted_gradient_cov(grads, w_hat)
+    v = weighted_gradient_cov(grads, w_hat) + _pool_cov_term(grads, w_hat, pool_size)
     h_inv = np.linalg.inv(h)
     cov = h_inv @ v @ h_inv
     return _vector_result(theta, cov, alpha, "ols", "classical", n)
@@ -274,15 +318,21 @@ def _ols_ppi_solve(x_lab, y_lab, f_lab, x_unl, f_unl, w_hat, lam):
     return np.linalg.solve(lhs, rhs), lhs
 
 
-def _ols_ppi_cov(x_lab, y_lab, f_lab, x_unl, f_unl, w_hat, theta, h, lam):
+def _ols_ppi_cov(x_lab, y_lab, f_lab, x_unl, f_unl, w_hat, theta, h, lam, pool_size=None):
     a = x_unl * (x_unl @ theta - f_unl)[:, None]
     bc = x_lab * ((x_lab @ theta - y_lab) - lam * (x_lab @ theta - f_lab))[:, None]
     v = (lam**2) * mean_of_iid_cov(a) + weighted_gradient_cov(bc, w_hat)
+    if pool_size is not None:
+        # Pool-level unit score is x(x'theta - y): lam-terms telescope.
+        b = x_lab * (x_lab @ theta - y_lab)[:, None]
+        v = v + _pool_cov_term(b, w_hat, pool_size)
     h_inv = np.linalg.inv(h)
     return h_inv @ v @ h_inv
 
 
-def ols_ppi(x_lab, y_lab, f_lab, x_unl, f_unl, w=None, lam=1.0, alpha=DEFAULT_ALPHA):
+def ols_ppi(
+    x_lab, y_lab, f_lab, x_unl, f_unl, w=None, lam=1.0, alpha=DEFAULT_ALPHA, pool_size=None
+):
     """Rectified OLS with sandwich CIs and optional labeled-sample weights."""
     x_lab = np.asarray(x_lab, dtype=float)
     y_lab = np.asarray(y_lab, dtype=float)
@@ -292,14 +342,27 @@ def ols_ppi(x_lab, y_lab, f_lab, x_unl, f_unl, w=None, lam=1.0, alpha=DEFAULT_AL
     n = x_lab.shape[0]
     w_hat = normalize_weights(w, n)
     theta, h = _ols_ppi_solve(x_lab, y_lab, f_lab, x_unl, f_unl, w_hat, lam)
-    cov = _ols_ppi_cov(x_lab, y_lab, f_lab, x_unl, f_unl, w_hat, theta, h, lam)
+    cov = _ols_ppi_cov(x_lab, y_lab, f_lab, x_unl, f_unl, w_hat, theta, h, lam, pool_size)
     return _vector_result(theta, cov, alpha, "ols", "ppi", n, x_unl.shape[0], lam)
 
 
 def ols_ppi_power_tuned(
-    x_lab, y_lab, f_lab, x_unl, f_unl, w=None, alpha=DEFAULT_ALPHA, grid_size=_LAM_GRID_OLS
+    x_lab,
+    y_lab,
+    f_lab,
+    x_unl,
+    f_unl,
+    w=None,
+    alpha=DEFAULT_ALPHA,
+    grid_size=_LAM_GRID_OLS,
+    pool_size=None,
 ):
-    """PPI++ OLS: lambda on a [0,1] grid minimizing tr(sandwich cov)."""
+    """PPI++ OLS: lambda on a [0,1] grid minimizing tr(sandwich cov).
+
+    Lambda selection uses the two-sample covariance (the pool term is
+    lam-independent, so it cannot move the minimizer); the reported CI
+    includes the pool term when pool_size is given.
+    """
     x_lab = np.asarray(x_lab, dtype=float)
     y_lab = np.asarray(y_lab, dtype=float)
     f_lab = np.asarray(f_lab, dtype=float)
@@ -314,7 +377,9 @@ def ols_ppi_power_tuned(
         tr = float(np.trace(cov))
         if tr < best[0]:
             best = (tr, float(lam))
-    out = ols_ppi(x_lab, y_lab, f_lab, x_unl, f_unl, w=w, lam=best[1], alpha=alpha)
+    out = ols_ppi(
+        x_lab, y_lab, f_lab, x_unl, f_unl, w=w, lam=best[1], alpha=alpha, pool_size=pool_size
+    )
     out["method"] = "ppi_power_tuned"
     return out
 
@@ -365,7 +430,7 @@ def _logistic_solve(x_lab, y_lab, f_lab, x_unl, f_unl, w_hat, lam):
     return res.x
 
 
-def _logistic_ppi_cov(x_lab, y_lab, f_lab, x_unl, f_unl, w_hat, theta, lam):
+def _logistic_ppi_cov(x_lab, y_lab, f_lab, x_unl, f_unl, w_hat, theta, lam, pool_size=None):
     big_n = x_unl.shape[0]
     su = _sigmoid(x_unl @ theta)
     sl = _sigmoid(x_lab @ theta)
@@ -376,21 +441,27 @@ def _logistic_ppi_cov(x_lab, y_lab, f_lab, x_unl, f_unl, w_hat, theta, lam):
     a = x_unl * (su - f_unl)[:, None]
     bc = x_lab * ((sl - y_lab) - lam * (sl - f_lab))[:, None]
     v = (lam**2) * mean_of_iid_cov(a) + weighted_gradient_cov(bc, w_hat)
+    if pool_size is not None:
+        # Pool-level unit score is x(sigma - y): lam-terms telescope.
+        b = x_lab * (sl - y_lab)[:, None]
+        v = v + _pool_cov_term(b, w_hat, pool_size)
     h_inv = np.linalg.inv(h)
     return h_inv @ v @ h_inv
 
 
-def logistic_classical(x, y, w=None, alpha=DEFAULT_ALPHA):
+def logistic_classical(x, y, w=None, alpha=DEFAULT_ALPHA, pool_size=None):
     """(Weighted) logistic MLE with sandwich CIs."""
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
     w_hat = normalize_weights(w, x.shape[0])
     theta = _logistic_solve(x, y, y, x, y, w_hat, 0.0)
-    cov = _logistic_ppi_cov(x, y, y, x, y, w_hat, theta, 0.0)
+    cov = _logistic_ppi_cov(x, y, y, x, y, w_hat, theta, 0.0, pool_size)
     return _vector_result(theta, cov, alpha, "logistic", "classical", x.shape[0])
 
 
-def logistic_ppi(x_lab, y_lab, f_lab, x_unl, f_unl, w=None, lam=1.0, alpha=DEFAULT_ALPHA):
+def logistic_ppi(
+    x_lab, y_lab, f_lab, x_unl, f_unl, w=None, lam=1.0, alpha=DEFAULT_ALPHA, pool_size=None
+):
     """Rectified logistic coefficients (f = predicted probabilities)."""
     x_lab = np.asarray(x_lab, dtype=float)
     y_lab = np.asarray(y_lab, dtype=float)
@@ -399,7 +470,7 @@ def logistic_ppi(x_lab, y_lab, f_lab, x_unl, f_unl, w=None, lam=1.0, alpha=DEFAU
     f_unl = np.asarray(f_unl, dtype=float)
     w_hat = normalize_weights(w, x_lab.shape[0])
     theta = _logistic_solve(x_lab, y_lab, f_lab, x_unl, f_unl, w_hat, lam)
-    cov = _logistic_ppi_cov(x_lab, y_lab, f_lab, x_unl, f_unl, w_hat, theta, lam)
+    cov = _logistic_ppi_cov(x_lab, y_lab, f_lab, x_unl, f_unl, w_hat, theta, lam, pool_size)
     return _vector_result(theta, cov, alpha, "logistic", "ppi", x_lab.shape[0], x_unl.shape[0], lam)
 
 
@@ -412,8 +483,14 @@ def logistic_ppi_power_tuned(
     w=None,
     alpha=DEFAULT_ALPHA,
     grid_size=_LAM_GRID_LOGISTIC,
+    pool_size=None,
 ):
-    """PPI++ logistic: lambda on a [0,1] grid minimizing tr(sandwich cov)."""
+    """PPI++ logistic: lambda on a [0,1] grid minimizing tr(sandwich cov).
+
+    Lambda selection uses the two-sample covariance (the pool term is
+    lam-independent); the reported CI includes the pool term when
+    pool_size is given.
+    """
     x_lab = np.asarray(x_lab, dtype=float)
     y_lab = np.asarray(y_lab, dtype=float)
     f_lab = np.asarray(f_lab, dtype=float)
@@ -428,6 +505,8 @@ def logistic_ppi_power_tuned(
         tr = float(np.trace(cov))
         if tr < best[0]:
             best = (tr, float(lam))
-    out = logistic_ppi(x_lab, y_lab, f_lab, x_unl, f_unl, w=w, lam=best[1], alpha=alpha)
+    out = logistic_ppi(
+        x_lab, y_lab, f_lab, x_unl, f_unl, w=w, lam=best[1], alpha=alpha, pool_size=pool_size
+    )
     out["method"] = "ppi_power_tuned"
     return out

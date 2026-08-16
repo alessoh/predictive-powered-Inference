@@ -31,6 +31,7 @@ import numpy as np
 from scipy import stats
 
 from ppi_core import estimators as est
+from ppi_core import runner
 from ppi_core.bootstrap import bootstrap_ci
 from ppi_core.serialize import canonical_json
 
@@ -48,6 +49,8 @@ def _rng(scenario: str, seed: int) -> np.random.Generator:
         "logistic": 13,
         "active_ipw_mean": 14,
         "bootstrap_mean": 15,
+        "active_loop_mean": 16,
+        "policy_gain": 17,
     }
     return np.random.Generator(
         np.random.PCG64(np.random.SeedSequence(seed, spawn_key=(4, known[scenario])))
@@ -231,9 +234,93 @@ def sim_bootstrap_mean(
     return _summary(hits, widths, reps)
 
 
-# Rows exempt from the coverage gate: they exist to *show* the failure
-# mode that IPW corrects, and are expected to under-cover.
-UNGATED = {"active_ipw_mean.ppi_naive"}
+def sim_active_loop_mean(seed: int = MASTER_SEED, reps: int = 400, pool: int = 1200) -> dict:
+    """The strongest gate: the *entire* experiment runner end-to-end.
+
+    Each replication draws a fresh pool, runs a full multi-round active
+    experiment (uncertainty policy, cumulative propensities, hard budget
+    cap with thinning) through ppi_core.runner, and checks the final
+    round's IPW-weighted CIs against the known superpopulation truth.
+    This certifies the composite adaptive pipeline, not just one round.
+    """
+    rng = _rng("active_loop_mean", seed)
+    truth = 3.0
+    hits = {"ppi": 0, "ppi_power_tuned": 0, "classical": 0}
+    widths = {k: [] for k in hits}
+    for _ in range(reps):
+        y = rng.normal(truth, 1.5, pool)
+        f = 0.7 * y + rng.normal(0.0, 0.5, pool)
+        u = np.abs(f - f.mean()) / 2.0 + rng.uniform(0.1, 0.3, pool)
+        cfg = {
+            "estimand": "mean",
+            "policy": "uncertainty",
+            "batch_size": 50,
+            "label_budget": 200,
+            "seed": int(rng.integers(0, 2**31)),
+            "n_boot": 0,
+        }
+        state = runner.init_state(cfg, {"f_pool": f, "u_pool": u, "y_pool": y})
+        final = runner.run_to_completion(state)
+        last = final["history"][-1]["estimates"]
+        for k in hits:
+            o = last[k]
+            hits[k] += _covers(o, truth)
+            widths[k].append(o["ci_upper"] - o["ci_lower"])
+    return _summary(hits, widths, reps)
+
+
+def sim_policy_gain(seed: int = MASTER_SEED, reps: int = 60, pool: int = 2000) -> dict:
+    """Width-vs-spend: does each policy beat the random baseline?
+
+    Not a coverage gate — an efficiency report.  For each policy, runs
+    the full loop and records the final power-tuned PPI interval width;
+    the report shows mean width per policy so the dashboard's claim
+    'policy X beats random here' traces to this measured experiment.
+    Design note: predictions are good where |y| is small and poor in the
+    tails, and oracle uncertainty reflects that — the regime where
+    residual-targeted selection genuinely helps.
+    """
+    rng = _rng("policy_gain", seed)
+    truth = 0.0
+    widths: dict = {p: [] for p in ("random", "uncertainty", "variance_reduction", "diversity")}
+    hits: dict = {p: 0 for p in widths}
+    for _ in range(reps):
+        y = rng.normal(truth, 2.0, pool)
+        resid_scale = 0.2 + 0.5 * np.abs(y) / 2.0  # heteroskedastic oracle error
+        f = y + rng.normal(0.0, 1.0, pool) * resid_scale
+        u = resid_scale * np.sqrt(2.0 / np.pi)  # E|resid| for normal errors
+        x = np.column_stack([y * 0.0 + 1.0, f])  # features for diversity policy
+        data_seed = int(rng.integers(0, 2**31))
+        for policy in widths:
+            cfg = {
+                "estimand": "mean",
+                "policy": policy,
+                "batch_size": 60,
+                "label_budget": 240,
+                "seed": data_seed,
+                "n_boot": 0,
+            }
+            state = runner.init_state(cfg, {"f_pool": f, "u_pool": u, "x_pool": x, "y_pool": y})
+            final = runner.run_to_completion(state)
+            o = final["history"][-1]["estimates"]["ppi_power_tuned"]
+            widths[policy].append(o["ci_upper"] - o["ci_lower"])
+            hits[policy] += _covers(o, truth)
+    return _summary(hits, widths, reps)
+
+
+# Rows exempt from the coverage gate:
+# - active_ipw_mean.ppi_naive exists to *show* the failure mode IPW
+#   corrects and is expected to under-cover (0.0 measured).
+# - policy_gain.* is an efficiency (width-vs-spend) experiment at 60
+#   reps; the coverage of the identical pipeline is gated at 400 reps by
+#   active_loop_mean.  Gating a 60-rep coverage estimate would be noise.
+UNGATED = {
+    "active_ipw_mean.ppi_naive",
+    "policy_gain.random",
+    "policy_gain.uncertainty",
+    "policy_gain.variance_reduction",
+    "policy_gain.diversity",
+}
 
 
 def run_all(seed: int = MASTER_SEED, fast: bool = False) -> dict:
@@ -251,6 +338,8 @@ def run_all(seed: int = MASTER_SEED, fast: bool = False) -> dict:
             "logistic": sim_logistic(seed, reps=300 // div),
             "active_ipw_mean": sim_active_ipw_mean(seed, reps=1000 // div),
             "bootstrap_mean": sim_bootstrap_mean(seed, reps=300 // div),
+            "active_loop_mean": sim_active_loop_mean(seed, reps=400 // div),
+            "policy_gain": sim_policy_gain(seed, reps=60 // div),
         },
     }
     failures = []

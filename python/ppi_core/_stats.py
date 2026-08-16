@@ -68,3 +68,16 @@ def mean_of_iid_cov(g: np.ndarray) -> np.ndarray:
     m = g.shape[0]
     centered = g - g.mean(axis=0)
     return centered.T @ centered / (m - 1) / m
+
+
+def weighted_population_variance(a: np.ndarray, w_hat: np.ndarray) -> float:
+    """Hájek estimate of the *population* (unit-level) variance of a."""
+    abar = w_hat @ a
+    return float(w_hat @ (a - abar) ** 2)
+
+
+def weighted_population_cov(g: np.ndarray, w_hat: np.ndarray) -> np.ndarray:
+    """Hájek estimate of the population covariance of gradient rows g."""
+    gbar = w_hat @ g
+    centered = g - gbar
+    return (centered * w_hat[:, None]).T @ centered

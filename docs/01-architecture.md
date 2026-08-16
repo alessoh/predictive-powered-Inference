@@ -73,6 +73,18 @@ Naive active selection makes the labeled set non-representative and silently bia
 - Consequence, stated honestly: IPW restores unbiasedness at the cost of variance when propensities are skewed; the floor bounds the weights, and the coverage simulation runs **with active selection on**, so the ≥93% empirical coverage gate certifies the corrected pipeline, not just i.i.d. sampling. If power-tuned PPI + IPW interact badly in simulation, that result is reported in the dashboard and the gauntlet log rather than smoothed over.
 - The random baseline (uniform sampling, weights ≡ 1) is always run alongside and always plotted.
 
+**Pool-mode variance (added 2026-08-16, after the full-loop simulation caught it):** the runner
+labels a subset of one finite pool of M records and uses the remainder as the unlabeled sample,
+while two-sample PPI assumes independent labeled/unlabeled draws. Estimating a superpopulation
+parameter from one pool adds a finite-pool variance component; at the pool level the λ-terms
+telescope, leaving the plain unit-level score (y for the mean; x(x′θ−y) for OLS; x(σ−y) for
+logistic; 1{y≤t}−F for the CDF), whose population (co)variance divided by M is added to the
+reported variance when `pool_size` is passed. Without it the full-loop simulation measured
+0.9275 coverage at nominal 0.95; with it, 0.9725. Multi-round adaptive selection uses realized
+cumulative inclusion probabilities (martingale-conditional correctness; residual approximation
+certified by the same simulation), and the hard budget cap thins Poisson overflow uniformly
+with a propensity correction.
+
 ## Multi-agent DOT workflow
 
 Agents are TypeScript modules (Anthropic SDK) with one responsibility each, run server-side in Next.js route handlers; the statistical work they trigger stays in Python.
