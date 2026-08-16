@@ -62,3 +62,5 @@ htmlcov/
 
 # python packaging artifacts
 *.egg-info/
+
+.vercel
