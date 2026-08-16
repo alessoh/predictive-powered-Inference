@@ -115,12 +115,16 @@ export default function RunsPage() {
                 return (
                   <tr key={r.id} className="border-t" style={{ borderColor: "var(--edge)" }}>
                     <td className="p-2">
-                      <input
-                        type="checkbox"
-                        aria-label={`Select ${r.name} for diff`}
-                        checked={selected.includes(r.id)}
-                        onChange={() => toggle(r.id)}
-                      />
+                      {/* Label wrapper enlarges the hit target (integration
+                          review finding: bare 13px inputs are miss-prone). */}
+                      <label className="flex cursor-pointer items-center justify-center p-2">
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${r.name} for diff`}
+                          checked={selected.includes(r.id)}
+                          onChange={() => toggle(r.id)}
+                        />
+                      </label>
                     </td>
                     <td className="p-2">{r.name}</td>
                     <td className="num p-2 text-[12px]">{r.createdAt.slice(0, 19)}</td>

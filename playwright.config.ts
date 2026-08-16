@@ -17,8 +17,15 @@ export default defineConfig({
     trace: "on-first-retry",
   },
   projects: [
+    // All three width projects run Chromium (the iPad profile defaults
+    // to WebKit, which CI does not install): these projects exist to
+    // cover the responsive layouts, not browser-engine differences.
     { name: "desktop", use: { ...devices["Desktop Chrome"] }, testIgnore: /scene-perf/ },
-    { name: "tablet", use: { ...devices["iPad (gen 11)"] }, testIgnore: /scene-perf/ },
+    {
+      name: "tablet",
+      use: { ...devices["iPad (gen 11)"], browserName: "chromium" },
+      testIgnore: /scene-perf/,
+    },
     { name: "mobile", use: { ...devices["Pixel 7"] }, testIgnore: /scene-perf/ },
     {
       // Frame-time gate: full Chromium, headed, real GPU. Run explicitly
