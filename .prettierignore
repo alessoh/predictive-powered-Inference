@@ -8,3 +8,6 @@ public/
 api/
 python/
 reference/
+fixtures/
+src/data/coverage-report.json
+.vercel/
