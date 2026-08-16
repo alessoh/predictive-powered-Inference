@@ -9,6 +9,7 @@
 
 import { useMemo } from "react";
 
+import { fmtInterval } from "@/components/StatTiles";
 import type { RunState } from "@/lib/run-state";
 
 const W = 640;
@@ -34,11 +35,20 @@ export function Fallback2D({ state, freshIdx }: { state: RunState; freshIdx: num
 
   const last = state.history[state.history.length - 1];
   const e = last?.estimates.ppi;
-  const fmt = (v: number) => (Math.abs(v) >= 100 ? v.toFixed(1) : v.toFixed(2));
+  // One precision for the whole readout (same rule as the stat tiles).
+  const fmt = e ? fmtInterval([e.estimate, e.ci_lower, e.ci_upper]) : (v: number) => String(v);
 
   return (
-    <figure aria-label="2D projection of the sampling space">
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img">
+    <figure
+      aria-label="2D projection of the sampling space"
+      className="flex h-full min-h-0 flex-col overflow-hidden"
+    >
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        preserveAspectRatio="xMidYMid meet"
+        className="min-h-0 w-full grow"
+        role="img"
+      >
         <rect x={20} y={10} width={W - 40} height={PLOT_H - 20} fill="var(--surface-3)" rx={6} />
         {pts.map((p) => (
           <circle key={p.i} cx={p.cx} cy={p.cy} r={1.6} fill="var(--ink-3)" opacity={0.55} />

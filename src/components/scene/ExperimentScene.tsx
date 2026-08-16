@@ -23,6 +23,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 
+import { fmtInterval } from "@/components/StatTiles";
 import type { PoolRecordMeta, RunState } from "@/lib/run-state";
 
 export interface SceneData {
@@ -341,7 +342,8 @@ export function ExperimentScene({ data }: { data: SceneData }) {
   const stats = useMemo(() => acquisitionStats(data.state), [data.state]);
   const last = data.state.history[data.state.history.length - 1];
   const e = last?.estimates.ppi;
-  const fmtV = (v: number) => (Math.abs(v) >= 100 ? v.toFixed(1) : v.toFixed(2));
+  // One precision across hi/est/lo (same rule as the stat tiles).
+  const fmtV = e ? fmtInterval([e.estimate, e.ci_lower, e.ci_upper]) : (v: number) => String(v);
   if (!theme) return null;
 
   return (

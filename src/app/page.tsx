@@ -181,15 +181,19 @@ export default function ExperimentLab() {
     <main className="grid gap-4 lg:grid-cols-[320px_1fr]">
       <h1 className="sr-only">Experiment Lab</h1>
       <div>
-        <button
-          type="button"
-          className="chip mb-2 w-full justify-center py-2 lg:hidden"
-          aria-expanded={railOpen}
-          aria-controls="config-rail"
-          onClick={() => setRailOpen(!railOpen)}
-        >
-          {railOpen ? "Hide configuration ▴" : "Configure experiment ▾"}
-        </button>
+        {/* Wrapper carries lg:hidden: the unlayered .chip display rule
+            would beat a layered utility on the button itself (review). */}
+        <div className="lg:hidden">
+          <button
+            type="button"
+            className="chip mb-2 w-full justify-center py-2"
+            aria-expanded={railOpen}
+            aria-controls="config-rail"
+            onClick={() => setRailOpen(!railOpen)}
+          >
+            {railOpen ? "Hide configuration ▴" : "Configure experiment ▾"}
+          </button>
+        </div>
         <div id="config-rail" className={`${railOpen ? "block" : "hidden"} lg:block`}>
           <ConfigRail value={config} onChange={setConfig} onLaunch={launch} running={running} />
         </div>
