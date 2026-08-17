@@ -8,10 +8,17 @@
 
 import { expect, test, type Page } from "@playwright/test";
 
-test.skip(({ browserName }) => browserName !== "chromium", "WebGL gates run on Chromium");
+// The disposal gate exercises the renderer, which is identical across
+// viewport projects — one leg (desktop) is sufficient and keeps the CI
+// matrix legs inside their time budget.
+test.skip(({}, testInfo) => testInfo.project.name !== "desktop", "renderer gate runs once");
 
 async function launchRun(page: Page, query = ""): Promise<void> {
   await page.goto(`/${query}`);
+  // Below 1024px the rail is behind a disclosure (docs/03-design.md);
+  // open it like a real user would before configuring.
+  const disclosure = page.getByRole("button", { name: /Configure experiment/ });
+  if (await disclosure.isVisible()) await disclosure.click();
   await page.getByLabel("Label budget").fill("60");
   await page.getByLabel("Batch size").fill("30");
   await page.getByRole("button", { name: "Launch experiment" }).click();

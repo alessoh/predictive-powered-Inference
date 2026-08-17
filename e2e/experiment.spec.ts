@@ -10,6 +10,10 @@ async function launchSmallRun(
   opts: { policy?: string; budget?: number } = {},
 ): Promise<void> {
   await page.goto("/");
+  // Below 1024px the rail is behind a disclosure (docs/03-design.md);
+  // open it like a real user would before configuring.
+  const disclosure = page.getByRole("button", { name: /Configure experiment/ });
+  if (await disclosure.isVisible()) await disclosure.click();
   if (opts.policy) {
     await page.getByRole("radio", { name: opts.policy }).check();
   }
