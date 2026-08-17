@@ -9,9 +9,12 @@
 import { expect, test, type Page } from "@playwright/test";
 
 // The disposal gate exercises the renderer, which is identical across
-// viewport projects — one leg (desktop) is sufficient and keeps the CI
-// matrix legs inside their time budget.
-test.skip(({}, testInfo) => testInfo.project.name !== "desktop", "renderer gate runs once");
+// viewport projects — one leg (the desktop viewport) is sufficient and
+// keeps the CI matrix legs inside their time budget.
+test.skip(
+  ({ viewport }) => (viewport?.width ?? 0) < 1024,
+  "renderer gate runs once, on the desktop viewport",
+);
 
 async function launchRun(page: Page, query = ""): Promise<void> {
   await page.goto(`/${query}`);
