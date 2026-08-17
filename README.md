@@ -14,6 +14,103 @@ targets, and the estimate chart](docs/screenshot.png)
 the PPI interval [97.8, 261.9] days around a mean-duration estimate of 179.9, after
 spending a 200-label budget under the variance-reduction policy.*
 
+## Prediction-powered inference, in plain language
+
+Suppose you need a trustworthy number — say, the average time a road stays under
+construction — and you have two ways to get it:
+
+1. **The careful way**: have an expert check records one by one. Accurate, but slow and
+   expensive, so you can only afford a small sample.
+2. **The fast way**: let an AI model guess the answer for every record. Cheap and
+   instant, but the model is sometimes wrong, and worse, it can be wrong in a *biased*
+   way — always guessing a little high, for instance. Averaging a million biased guesses
+   gives you a very confident wrong answer.
+
+Prediction-powered inference (PPI) combines both so you get the speed of the model
+**without inheriting its bias**. Step by step:
+
+1. **Let the model predict everything.** Every record gets an AI prediction — cheap.
+2. **Carefully check a small sample.** For a few records, get the true answer the
+   expensive way.
+3. **Measure how wrong the model is.** On the checked records you have both the
+   prediction and the truth, so you can measure the model's average error — its bias.
+4. **Correct the big average with the measured error.** Take the model's average over
+   *all* records and subtract the bias you measured. This corrected number is the PPI
+   estimate.
+5. **Report honest uncertainty.** Because the correction comes from a random sample, you
+   can put a rigorous confidence interval around the result — one that is provably no
+   worse than what the small sample alone would give you, and usually much tighter.
+
+The punchline: **if the model is good, you win big** (tight intervals from a tiny labeled
+budget); **if the model is bad, you lose nothing** (the correction cancels it, and the
+math tells you so). You never have to *trust* the model — you measure it.
+
+This engine adds an **active learning loop** on top: instead of checking a random sample,
+it spends the checking budget where the model seems least reliable, while carefully
+preserving the statistical guarantee (that part is subtle, and it is the most heavily
+audited code in the repository).
+
+### What that means for a DOT, concretely
+
+State DOTs publish live work-zone feeds — hundreds of records like *"US 72 between S
+Fulton Dr and S Cass St — road work, expect delays."* Leadership wants answers like "how
+long does a typical work zone actually last?" or "what share of zones restrict lanes?"
+Here is how this prototype answers them:
+
+1. **Ingest**: an agent pulls live WZDx feeds from Mississippi, Utah, Missouri, and
+   Kentucky, normalizes three different schema dialects into one shape, and stamps
+   where every field came from.
+2. **Predict**: a labeling agent (Claude, Gemini, or a deterministic keyword heuristic —
+   the oracle's identity is always displayed) reads only each record's free-text
+   description and predicts the answer, e.g. duration in days.
+3. **Verify**: a verification agent grounds the true answer for selected records from the
+   feed's authoritative structured fields (start/end dates, vehicle-impact codes) — and
+   refuses records it cannot ground.
+4. **Spend the budget wisely**: the active learning policy picks which records to verify,
+   spending a fixed label budget where it shrinks the error bars fastest.
+5. **Report honestly**: the dashboard shows the corrected estimate with its confidence
+   interval, alongside the naive classical estimate — you watch the interval tighten in
+   real time as the budget is spent, and a random-selection baseline is always plotted so
+   you can see whether the clever policy is actually earning its keep.
+
+## How it compares (the competition)
+
+- **Classical survey estimation** (label a random sample, ignore the model): the century-
+  old gold standard, and it is always shown in this dashboard as the orange baseline. PPI
+  is provably never worse, and in our gated experiments its intervals are roughly **half
+  the width** at the same budget (0.239 vs 0.489 in the mean scenario) — equivalently, the
+  same certainty for ~a quarter of the labeling cost.
+- **Pure model-based estimates** (average the AI's guesses, skip the checking): the
+  tempting and dangerous default. Our gate includes a scenario where this approach's
+  95% intervals cover the truth **0% of the time** while PPI covers 95.4% — same data,
+  same model, the only difference is the correction.
+- **Classical semi-supervised/model-assisted estimators** (post-stratification,
+  regression estimators from survey statistics): PPI generalizes this family to arbitrary
+  black-box predictors with finite-sample-honest intervals; the power-tuned variant
+  (PPI++, Angelopoulos et al. 2023) recovers them as special cases and picks the optimal
+  blend automatically.
+- **Other PPI implementations** (e.g. the authors' reference `ppi_py`): excellent for
+  batch analysis in a notebook. This project's contribution is the *system around the
+  estimator*: an active-selection loop that provably preserves coverage (with the gate to
+  enforce it), chunked serverless execution, a live multi-agent data pipeline, and a
+  dashboard where every number is auditable to its source.
+
+## Applications
+
+The pattern fits any setting with **many cheap AI predictions and few expensive truths**:
+
+- **Transportation**: work-zone duration and lane-closure burden (this prototype);
+  crash-report severity coding; pavement-condition estimation from imagery; transit
+  on-time statistics from noisy AVL feeds.
+- **Government statistics**: any agency wanting AI-accelerated official numbers that
+  still carry defensible error bars for a legislature or court.
+- **Science**: AlphaFold-predicted structures calibrated by a few crystallography
+  experiments (the original PPI paper's motivating case); remote-sensing land-use
+  estimates checked by field surveys.
+- **Industry**: LLM-judged content moderation rates audited by human review; customer
+  sentiment at scale with a small human-coded sample; data-quality metrics over large
+  warehouses where only a few records can be hand-verified.
+
 ## What the engine does
 
 - **Rectified (PPI) estimators** for means, quantiles, OLS, and logistic coefficients,
@@ -56,9 +153,11 @@ spending a 200-label budget under the variance-reduction policy.*
 
 ## What it does not do yet (honest gaps)
 
-- **Live LLM labeling requires `ANTHROPIC_API_KEY`**; the default oracle is a
-  deterministic, documented, deliberately weak heuristic (`heuristic:v1`) whose identity
-  is displayed on every run.
+- **Live LLM labeling requires an API key** (`ANTHROPIC_API_KEY` for the Claude oracle,
+  `GEMINI_API_KEY` for the Gemini oracle); the default oracle is a deterministic,
+  documented, deliberately weak heuristic (`heuristic:v1`) whose identity is displayed on
+  every run. The live oracles share one tested parsing/clamping path and the same
+  between-batch token ceiling.
 - **Ground-truth labels derive from authoritative feed fields** via the verification
   agent; the label budget simulates acquisition cost rather than paying a human oracle.
 - **The `lane_restricted` estimand covers MS + MO only** (Utah and Kentucky publish

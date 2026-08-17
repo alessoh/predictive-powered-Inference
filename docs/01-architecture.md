@@ -126,7 +126,7 @@ Vercel functions are stateless and this project provisions no database. Decision
 
 ## LLM usage & secrets
 
-- `ANTHROPIC_API_KEY` (server-side only) powers the research/labeling/verification agents in live mode; fixture mode needs no key.
+- `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` (server-side only) power the live labeling oracles ("anthropic" and "gemini"); fixture mode and the heuristic oracle need no key.
 - Any feed API keys are `DOT_*` env vars. All secrets documented in `.env.example`; none are ever required for `npm run gate` (tests run on fixtures).
 
 ## Known risks carried forward

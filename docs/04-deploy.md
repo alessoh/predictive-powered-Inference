@@ -88,7 +88,7 @@ Verification checklist on the preview URL:
 ## Environment variables
 
 All secrets are env vars; none are required for fixture mode. `.env.example` documents:
-`ANTHROPIC_API_KEY` (live labeling oracle only) and reserved `DOT_FEED_*_KEY` slots.
+`ANTHROPIC_API_KEY` and `GEMINI_API_KEY` (live labeling oracles only) and reserved `DOT_FEED_*_KEY` slots.
 Set them in the Vercel dashboard (Project → Settings → Environment Variables) if used.
 
 ## Deviations found while verifying (kept honest)

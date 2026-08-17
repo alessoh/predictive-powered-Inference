@@ -245,3 +245,36 @@ describe("orchestrator", () => {
     expect(JSON.stringify(a.research)).toBe(JSON.stringify(b.research));
   });
 });
+
+describe("live-oracle row parsing (shared by anthropic + gemini)", () => {
+  it("clamps ranges, skips malformed rows, tags oracle identity", async () => {
+    const { parseOracleItems } = await import("@/lib/agents/labeling");
+    const records = await msRecords();
+    const batch = records.slice(0, 3);
+    const preds = parseOracleItems(
+      [
+        { index: 0, lane_restricted_prob: 1.7, duration_days: -4, uncertainty: 0.5 },
+        { index: 1, lane_restricted_prob: 0.4, duration_days: 30, uncertainty: 9 },
+        { index: 2, lane_restricted_prob: 0.4, duration_days: 30 } as never, // malformed
+        { index: 99, lane_restricted_prob: 0.4, duration_days: 30, uncertainty: 0.1 }, // no record
+      ],
+      batch,
+      "gemini:gemini-2.5-flash",
+    );
+    expect(preds).toHaveLength(2);
+    expect(preds[0]!.laneRestrictedProb).toBe(1); // clamped down
+    expect(preds[0]!.durationDays).toBe(0); // clamped up
+    expect(preds[1]!.uncertainty).toBe(1); // clamped
+    for (const p of preds) {
+      expect(p.kind).toBe("prediction");
+      expect(p.oracle).toBe("gemini:gemini-2.5-flash");
+    }
+  });
+
+  it("gemini oracle refuses to run without a key", async () => {
+    const { geminiPredictBatch } = await import("@/lib/agents/labeling");
+    const records = await msRecords();
+    delete process.env.GEMINI_API_KEY;
+    await expect(geminiPredictBatch(records.slice(0, 2))).rejects.toThrow(/GEMINI_API_KEY/);
+  });
+});

@@ -3,7 +3,7 @@
  * experiment pool arrays for the statistical core.
  *
  * Body: { feedIds: string[], estimand: "duration_days"|"lane_restricted",
- *         mode?: "fixture"|"live", oracle?: "heuristic"|"anthropic" }
+ *         mode?: "fixture"|"live", oracle?: "heuristic"|"anthropic"|"gemini" }
  *
  * The pool contract (honesty notes):
  * - f: model-oracle predictions (tagged with oracle identity)
@@ -27,7 +27,7 @@ interface WorkflowRequestBody {
   feedIds?: string[];
   estimand?: Estimand;
   mode?: "fixture" | "live";
-  oracle?: "heuristic" | "anthropic";
+  oracle?: "heuristic" | "anthropic" | "gemini";
 }
 
 export async function POST(request: Request): Promise<NextResponse> {

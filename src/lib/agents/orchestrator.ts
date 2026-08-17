@@ -8,6 +8,7 @@
 import { ingestFeed, type FeedBodyLoader, type IngestResult } from "@/lib/agents/ingest";
 import {
   anthropicPredictBatch,
+  geminiPredictBatch,
   predictAllHeuristic,
   type PredictionSet,
 } from "@/lib/agents/labeling";
@@ -27,7 +28,7 @@ export interface OrchestratorConfig {
   feedIds: string[];
   mode: "live" | "fixture";
   estimand: Estimand;
-  oracle: "heuristic" | "anthropic";
+  oracle: "heuristic" | "anthropic" | "gemini";
   rubric?: Rubric;
   /** Hard ceiling on Anthropic tokens (input+output) per run. */
   maxTokens?: number;
@@ -168,11 +169,14 @@ export async function runWorkflow(
   // 4. Labeling agent supplies predictions for the whole pool.
   let predictions: PredictionSet;
   let tokensUsed = 0;
-  if (config.oracle === "anthropic") {
+  if (config.oracle === "anthropic" || config.oracle === "gemini") {
     // The ceiling is enforced BETWEEN batches so the run stops before
     // exceeding it, rather than discovering the overspend afterwards and
     // discarding paid-for predictions (review A2).
-    const { predictions: preds, usage } = await anthropicPredictBatch(pool, undefined, maxTokens);
+    const { predictions: preds, usage } =
+      config.oracle === "gemini"
+        ? await geminiPredictBatch(pool, undefined, maxTokens)
+        : await anthropicPredictBatch(pool, undefined, maxTokens);
     tokensUsed = usage.inputTokens + usage.outputTokens;
     const missing = pool.length - preds.length;
     if (missing > 0) {
@@ -181,7 +185,7 @@ export async function runWorkflow(
       );
     }
     predictions = {
-      oracle: preds[0]?.oracle ?? "anthropic:unknown",
+      oracle: preds[0]?.oracle ?? `${config.oracle}:unknown`,
       createdAt: new Date().toISOString(),
       predictions: preds,
     };

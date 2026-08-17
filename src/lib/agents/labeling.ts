@@ -182,25 +182,140 @@ export async function anthropicPredictBatch(
       throw new Error("labeling oracle returned no tool call");
     }
     const items = (tool.input as { items: Array<Record<string, number>> }).items;
-    for (const item of items) {
-      const idx = item.index;
-      const prob = item.lane_restricted_prob;
-      const dur = item.duration_days;
-      const unc = item.uncertainty;
-      if (idx === undefined || prob === undefined || dur === undefined || unc === undefined) {
-        continue; // malformed row: skip rather than invent values
-      }
-      const rec = batch[idx];
-      if (!rec) continue;
-      predictions.push({
-        kind: "prediction",
-        recordId: rec.id,
-        oracle: `anthropic:${ANTHROPIC_MODEL}`,
-        laneRestrictedProb: Math.min(1, Math.max(0, prob)),
-        durationDays: Math.max(0, dur),
-        uncertainty: Math.min(1, Math.max(0, unc)),
-      });
+    predictions.push(...parseOracleItems(items, batch, `anthropic:${ANTHROPIC_MODEL}`));
+  }
+  return { predictions, usage };
+}
+
+/**
+ * Shared, tested parsing/clamping for live-oracle rows: malformed rows
+ * are skipped (never invented), probabilities and uncertainties are
+ * clamped to [0,1], durations to >= 0.
+ */
+export function parseOracleItems(
+  items: Array<Record<string, number>>,
+  batch: WorkZoneRecord[],
+  oracleId: string,
+): Prediction[] {
+  const out: Prediction[] = [];
+  for (const item of items) {
+    const idx = item.index;
+    const prob = item.lane_restricted_prob;
+    const dur = item.duration_days;
+    const unc = item.uncertainty;
+    if (idx === undefined || prob === undefined || dur === undefined || unc === undefined) {
+      continue; // malformed row: skip rather than invent values
     }
+    const rec = batch[idx];
+    if (!rec) continue;
+    out.push({
+      kind: "prediction",
+      recordId: rec.id,
+      oracle: oracleId,
+      laneRestrictedProb: Math.min(1, Math.max(0, prob)),
+      durationDays: Math.max(0, dur),
+      uncertainty: Math.min(1, Math.max(0, unc)),
+    });
+  }
+  return out;
+}
+
+/* ----------------------------------------------------------------------
+ * Gemini oracle — live labeling via the Gemini REST API (no SDK; plain
+ * fetch with structured-output JSON schema). Needs GEMINI_API_KEY.
+ * -------------------------------------------------------------------- */
+
+const GEMINI_MODEL = "gemini-2.5-flash";
+
+const GEMINI_RESPONSE_SCHEMA = {
+  type: "object",
+  properties: {
+    items: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          index: { type: "integer" },
+          lane_restricted_prob: { type: "number" },
+          duration_days: { type: "number" },
+          uncertainty: { type: "number" },
+        },
+        required: ["index", "lane_restricted_prob", "duration_days", "uncertainty"],
+      },
+    },
+  },
+  required: ["items"],
+};
+
+export async function geminiPredictBatch(
+  records: WorkZoneRecord[],
+  apiKey?: string,
+  maxTokens = Number.POSITIVE_INFINITY,
+): Promise<{ predictions: Prediction[]; usage: AnthropicUsage }> {
+  const key = apiKey ?? process.env.GEMINI_API_KEY;
+  if (!key) throw new Error("gemini oracle requires GEMINI_API_KEY");
+  const predictions: Prediction[] = [];
+  const usage: AnthropicUsage = { inputTokens: 0, outputTokens: 0 };
+
+  for (let i = 0; i < records.length; i += BATCH_SIZE) {
+    // Same between-batch ceiling contract as the Anthropic oracle.
+    if (usage.inputTokens + usage.outputTokens >= maxTokens) {
+      throw new Error(
+        `token ceiling ${maxTokens} reached after ${predictions.length}/${records.length} ` +
+          `predictions; raise maxTokens deliberately or shrink the pool`,
+      );
+    }
+    const batch = records.slice(i, i + BATCH_SIZE);
+    const listing = batch
+      .map((r, j) => `${j}. ${r.description.slice(0, 400) || "(no description)"}`)
+      .join("\n");
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-goog-api-key": key },
+        signal: AbortSignal.timeout(60_000),
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [
+                {
+                  text:
+                    "You label state-DOT work-zone events from their free-text descriptions " +
+                    "ONLY. For each numbered description predict: lane_restricted_prob — " +
+                    "probability the zone restricts lanes (closures, alternating one-way, " +
+                    "flagging, temporary signals count as restricting; shoulder-only or " +
+                    "all-lanes-open does not); duration_days — expected total duration of " +
+                    "the work zone in days; uncertainty — your expected absolute error as " +
+                    "a fraction of scale, 0..1. Descriptions:\n" +
+                    listing,
+                },
+              ],
+            },
+          ],
+          generationConfig: {
+            responseMimeType: "application/json",
+            responseSchema: GEMINI_RESPONSE_SCHEMA,
+          },
+        }),
+      },
+    );
+    if (!res.ok) {
+      throw new Error(`gemini oracle returned HTTP ${res.status}: ${await res.text()}`);
+    }
+    const body = (await res.json()) as {
+      candidates?: { content?: { parts?: { text?: string }[] } }[];
+      usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
+    };
+    usage.inputTokens += body.usageMetadata?.promptTokenCount ?? 0;
+    usage.outputTokens += body.usageMetadata?.candidatesTokenCount ?? 0;
+    const text = body.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) throw new Error("gemini oracle returned no structured content");
+    const parsed = JSON.parse(text) as { items: Array<Record<string, number>> };
+    if (!Array.isArray(parsed.items)) {
+      throw new Error("gemini oracle response missing items array");
+    }
+    predictions.push(...parseOracleItems(parsed.items, batch, `gemini:${GEMINI_MODEL}`));
   }
   return { predictions, usage };
 }
