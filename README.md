@@ -25,7 +25,7 @@ spending a 200-label budget under the variance-reduction policy.*
   targets: analytic CIs target the superpopulation; the runner's bootstrap targets the
   ingested pool's mean. They answer different questions and are never conflated.
 - **A coverage gate as a build gate**: `python -m ppi_core.simulate --check` runs 16
-  simulation scenarios (≈9,000 full experiment replications) at known ground truth; any
+  simulation scenarios (7,960 seeded replications) at known ground truth; any
   nominal-95% interval covering below 93% empirically fails the build. Current status:
   **PASS, zero failures** — including end-to-end adaptive-loop scenarios purpose-built to
   break the estimator (a review round did break an earlier design at 13% coverage; the

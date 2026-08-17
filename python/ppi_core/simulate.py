@@ -579,6 +579,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help="print canonical JSON only")
     args = parser.parse_args(argv)
 
+    if args.check and args.fast:
+        # The gate is only meaningful at full replication counts; at ~1/5
+        # reps the binomial noise alone produces spurious sub-0.93 rows.
+        parser.error("--check requires full replication counts; drop --fast (smoke only)")
+
     report = run_all(seed=args.seed, fast=args.fast)
     if args.json:
         print(canonical_json(report))

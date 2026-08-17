@@ -30,7 +30,8 @@ export default defineConfig({
     {
       // Frame-time gate: full Chromium, headed, real GPU. Run explicitly
       // via `npm run test:perf`; not part of headless CI (SwiftShader
-      // cannot honestly measure the 60fps budget — docs/03-design.md).
+      // cannot honestly measure the 60fps budget — see
+      // docs/01-architecture.md and the gate list in docs/04-deploy.md).
       name: "scene-perf",
       use: {
         ...devices["Desktop Chrome"],

@@ -1,9 +1,12 @@
 # CI gate — every check the GAUNTLET LOOP's automated gate requires:
 # type checks (no suppressions), lint (no convenience disables), unit and
 # integration tests (TS + Python), the coverage simulation, and Playwright
-# end-to-end flows at three viewports. The frame-time gate needs a real
-# GPU and runs on developer machines via `npm run test:perf` (documented
-# in docs/03-design.md); Lighthouse runs against preview deploys.
+# end-to-end flows at three viewports. Two gates need a live target and
+# run outside CI, both repeatable and documented in docs/04-deploy.md:
+# the frame-time gate (`npm run test:perf`, real GPU required; rationale
+# also in docs/01-architecture.md) and the Lighthouse gate
+# (`npm run lighthouse <url>`, thresholds enforced by
+# scripts/lighthouse-gate.mjs, run against each deploy).
 
 name: ci
 

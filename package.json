@@ -13,12 +13,13 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test --project=desktop --project=tablet --project=mobile",
-    "test:py": ".venv/Scripts/python -m pytest reference python/tests -q",
-    "coverage:sim": ".venv/Scripts/python -m ppi_core.simulate --check",
+    "test:py": "node scripts/py.mjs -m pytest reference python/tests -q",
+    "coverage:sim": "node scripts/py.mjs -m ppi_core.simulate --check",
     "gate": "npm run typecheck && npm run lint && npm run format:check && npm run test && npm run test:py",
     "dev:py": "node scripts/dev-api.mjs",
-    "coverage:report": ".venv/Scripts/python -m ppi_core.simulate --check --json > src/data/coverage-report.json",
-    "test:perf": "playwright test --project=scene-perf"
+    "coverage:report": "node scripts/py.mjs -m ppi_core.simulate --check --json > src/data/coverage-report.json",
+    "test:perf": "playwright test --project=scene-perf",
+    "lighthouse": "node scripts/lighthouse-gate.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.117.1",

@@ -44,6 +44,9 @@ End-to-end and performance gates:
 ```bash
 npm run test:e2e       # Playwright, desktop+tablet+mobile (starts both servers itself)
 npm run test:perf      # frame-time gate: full Chromium, HEADED, real GPU required
+npm run lighthouse     # Lighthouse gate vs the deployed URL (or pass a URL argument):
+                       # thresholds perf>=90, a11y=100, best-practices=100, seo=100
+                       # enforced by scripts/lighthouse-gate.mjs (exits nonzero on FAIL)
 ```
 
 ## Architecture on Vercel
@@ -95,3 +98,8 @@ Set them in the Vercel dashboard (Project → Settings → Environment Variables
   is named `predictive-powered-inference` (set at first deploy).
 - `memory` in `vercel.json` functions config is ignored on Active CPU billing and was
   removed after the first deploy warned about it.
+- The npm gate scripts (`test:py`, `coverage:sim`, `coverage:report`) originally hardcoded
+  `.venv/Scripts/python`, which fails under npm's cmd.exe on Windows AND on POSIX (where
+  the venv path is `.venv/bin`). Caught by the deployment review's literal cold-clone
+  verification; they now route through `scripts/py.mjs`, which resolves the interpreter
+  per-OS with a PATH fallback for CI.
