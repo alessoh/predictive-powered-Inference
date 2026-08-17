@@ -63,11 +63,40 @@ jobs:
       - name: Build (Next.js production)
         run: npm run build
 
+  # End-to-end runs are split per viewport project: together they exceed
+  # the 45-minute job budget on the 2-core runner (SwiftShader rendering,
+  # and every test drives full inference runs). Each project alone fits.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [desktop, tablet, mobile]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          pip install -r requirements-dev.txt
+          pip install -e .
+
       - name: Playwright browsers
         run: npx playwright install --with-deps chromium
 
-      - name: End-to-end (desktop + tablet + mobile)
-        run: npx playwright test --project=desktop --project=tablet --project=mobile
+      - name: End-to-end (${{ matrix.project }})
+        run: npx playwright test --project=${{ matrix.project }}
         env:
           CI: "true"
 
@@ -75,6 +104,6 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.project }}
           path: playwright-report/
           retention-days: 7
