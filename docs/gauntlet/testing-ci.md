@@ -35,7 +35,7 @@ could pass with the feature broken"). Objections:
 
 1. `scripts/lighthouse-gate.mjs` + `npm run lighthouse`: runs Lighthouse headless against a
    URL (default: production) and **enforces thresholds in code** (performance ≥ 90,
-   accessibility = 100, best-practices ≥ 95, SEO ≥ 95), exiting nonzero on failure;
+   accessibility = 100, best-practices = 100, SEO = 100), exiting nonzero on failure;
    documented in docs/04-deploy.md with the invocation. Re-run against production at
    verification time: 98 / 100 / 100 / 100 — PASS.
 2. Pointers corrected to docs/01-architecture.md and docs/04-deploy.md.
@@ -48,3 +48,14 @@ agent was interrupted twice by infrastructure failures (a session limit, then a 
 stall) after it had independently confirmed CI green on 7c20a73 and inspected the two fix
 commits ("a typed, reason-stated conditional run, not a suppression"). A fresh critic with
 a narrow scope was engaged for the final verdict — see round 3.
+
+## Round 3 — fresh critic, final verdict: TESTING-CI: SIGN-OFF: APPROVED
+
+Verified: the Lighthouse gate script's threshold logic plus a live passing run against
+production (95/100/100/100, exit 0); corrected doc pointers resolving to real
+documentation; the full local gate on the current tree (typecheck, lint, 24 Vitest,
+87 pytest, ruff clean); per-job green CI on the five most recent commits including the
+Gemini-oracle commit. Residual notes (no objection): Lighthouse performance is
+run-variant (95–98 across runs; README now records the range), and this log's earlier
+bp/seo threshold wording was corrected to the stricter =100 the script enforces.
+**Workstream closed.**

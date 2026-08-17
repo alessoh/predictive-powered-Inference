@@ -33,3 +33,13 @@ spot-checks pass (test counts, scenario counts, feed numbers, tolerances). Objec
 
 **Critic re-verification note:** same infrastructure interruptions as testing-ci (see that
 log); fresh narrow-scope critic engaged for the final verdict — round 3 below.
+
+## Round 3 — fresh critic, final verdict: DEPLOYMENT: SIGN-OFF: APPROVED
+
+Verified: cross-platform `scripts/py.mjs` interpreter resolution with a passing 87-test
+run through it; docs/04-deploy.md matching the scripts as they exist; README numeric
+claims reconciled against `src/data/coverage-report.json` (including two number
+corrections the critic caught mid-review, fixed and re-verified in commit 518f50f);
+`.env.example` completeness including the new `GEMINI_API_KEY`; production responding
+200 with the Lighthouse gate passing. **Workstream closed. All nine gauntlet logs now
+carry written sign-offs.**

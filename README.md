@@ -198,5 +198,6 @@ coverage simulation, e2e, Lighthouse, frame-time), then reviewed by a separate h
 critic agent that re-derived the math, drove the running app, and refused sign-off until
 zero objections remained. The full audit trail — 40+ itemized objections including one
 statistical blocker found and fixed — is in `docs/gauntlet/`. Architecture and decisions:
-`docs/00-survey.md` → `docs/04-deploy.md`. Production Lighthouse: performance 98,
+`docs/00-survey.md` → `docs/04-deploy.md`. Production Lighthouse (gated by
+`npm run lighthouse`, thresholds enforced in code): performance 95-98 across runs,
 accessibility 100, best-practices 100, SEO 100.
