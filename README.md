@@ -82,7 +82,7 @@ Here is how this prototype answers them:
   same certainty for ~a quarter of the labeling cost.
 - **Pure model-based estimates** (average the AI's guesses, skip the checking): the
   tempting and dangerous default. Our gate includes a scenario where this approach's
-  95% intervals cover the truth **0% of the time** while PPI covers 95.4% — same data,
+  95% intervals cover the truth **0% of the time** while PPI covers 95.6% — same data,
   same model, the only difference is the correction.
 - **Classical semi-supervised/model-assisted estimators** (post-stratification,
   regression estimators from survey statistics): PPI generalizes this family to arbitrary
@@ -182,7 +182,7 @@ python -m venv .venv
 
 npm run test:py        # 87 Python tests (golden reference + production core)
 npm run coverage:sim   # the statistical gate (~5 min; exits nonzero on failure)
-npx vitest run         # 22 TS agent/workflow tests
+npx vitest run         # 24 TS agent/workflow tests
 npm run dev:py         # Python inference API :8765
 npm run dev            # Next.js :3000 (proxies /api/step in dev)
 npm run test:e2e       # Playwright, three viewports
